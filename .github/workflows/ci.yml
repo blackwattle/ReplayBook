@@ -42,3 +42,14 @@ jobs:
         with:
           name: evidence-pack-image
           path: demo_out/
+
+  # Every green build of main publishes the image. The credentials are repository secrets.
+  publish-image:
+    needs: [test, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+      - run: docker build -t blackwattle/replaybook:latest -t "blackwattle/replaybook:${GITHUB_SHA::7}" .
+      - run: docker push --all-tags blackwattle/replaybook

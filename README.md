@@ -301,6 +301,10 @@ docker run --rm --network none replaybook status                                
 docker compose up --build                                                       # the demo through compose
 ```
 
+A prebuilt image is published to Docker Hub by CI on every green build of `main`:
+`docker pull blackwattle/replaybook:latest` (each build is also tagged with its short commit).
+Build it yourself, as above, when you want to verify the SBOM against your own checkout.
+
 The image runs as a non-root user (uid 1000). On a Linux host, create the mounted directory
 first and make it writable to that user (`mkdir -p demo_out && chmod a+rwx demo_out`, or
 `chown 1000 demo_out`); Docker would otherwise create it owned by root and the container could
