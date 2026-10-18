@@ -1,5 +1,6 @@
 # Replaybook, self-hosted.
 #
+#   mkdir -p demo_out && chmod a+rwx demo_out   # Linux: the image runs as uid 1000 (see README)
 #   docker compose up --build          # offline demo with no network at all -> ./demo_out
 #   podman compose up --build          # same with podman (needs docker-compose or podman-compose)
 #

@@ -35,7 +35,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t replaybook .
       - run: docker run --rm --network none replaybook status
-      - run: mkdir demo_out && docker run --rm --network none -v "$PWD/demo_out:/work/demo_out" replaybook
+      # The image runs as uid 1000; the mounted directory must be writable to it.
+      - run: mkdir demo_out && chmod a+rwx demo_out && docker run --rm --network none -v "$PWD/demo_out:/work/demo_out" replaybook
       - run: docker run --rm --network none --entrypoint cat replaybook /app/sbom.cdx.json > demo_out/sbom-image.cdx.json
       - uses: actions/upload-artifact@v4
         with:

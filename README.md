@@ -301,6 +301,11 @@ docker run --rm --network none replaybook status                                
 docker compose up --build                                                       # the demo through compose
 ```
 
+The image runs as a non-root user (uid 1000). On a Linux host, create the mounted directory
+first and make it writable to that user (`mkdir -p demo_out && chmod a+rwx demo_out`, or
+`chown 1000 demo_out`); Docker would otherwise create it owned by root and the container could
+not write into it. Docker Desktop and rootless podman map the ownership for you.
+
 `podman` works the same way (`podman build`, `podman run`; add `:Z` to the volume on SELinux
 hosts, and `podman compose` needs the docker-compose or podman-compose provider). Base images
 are pinned by digest in the `Dockerfile`, so a rebuild uses the same bases until you change
