@@ -1,0 +1,3 @@
+# The maintainer owns every path, so the main-review ruleset (.github/rulesets/) needs the
+# maintainer's approval on every pull request.
+* @blackwattle

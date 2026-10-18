@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -43,11 +46,14 @@ jobs:
           name: evidence-pack-image
           path: demo_out/
 
-  # Every green build of main publishes the image. The credentials are repository secrets.
+  # Every green build of main publishes the image. The credentials are secrets of the
+  # dockerhub environment, which only main may use, so a workflow on another branch or a
+  # pull request never sees them.
   publish-image:
     needs: [test, image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: dockerhub
     steps:
       - uses: actions/checkout@v4
       - run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin

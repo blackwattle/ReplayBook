@@ -16,7 +16,26 @@ Add a sign-off line to every commit, which `git commit -s` does for you:
 The sign-off says that you wrote the change or otherwise have the right to submit it
 under the project's licence. There is no separate contributor agreement.
 
-## Before you open a merge request
+## How a change reaches main
+
+Fork the repository, or push a branch if you are a collaborator, and open a pull request
+against `main`. Nobody pushes to `main` directly apart from the maintainer's sync commits
+below, and nobody can force-push to it or delete it. A pull request can only be merged
+once:
+
+- CI passes: `test (ubuntu-latest)`, `test (windows-latest)` and `image`, and `sign-off`,
+  which fails any commit without a `Signed-off-by` line;
+- the maintainer, who owns every path (`.github/CODEOWNERS`), has approved it after its
+  last push, and every review thread is resolved.
+
+The rulesets that enforce this are in `.github/rulesets/`. Workflows on a pull request
+from a fork wait for the maintainer's approval before they run.
+
+In practice an accepted pull request is not merged here. `main` reaches this repository in
+the maintainer's sync commits, so the change is applied with your authorship and sign-off,
+arrives in the next sync commit, and the pull request is closed with a link to it.
+
+## Before you open a pull request
 
 Run the three checks the project runs before every commit:
 
@@ -39,7 +58,7 @@ Then check the rules in `CLAUDE.md`, in particular:
 
 ## What a good change looks like
 
-One change per merge request, with a test that fails without it, and a line in the
+One change per pull request, with a test that fails without it, and a line in the
 README if the behaviour a user sees changes. If you made a judgement call, say so in the
 description.
 
