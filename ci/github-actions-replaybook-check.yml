@@ -1,0 +1,27 @@
+# Copy to .github/workflows/replaybook-check.yml in the repository that holds your agent.
+name: replaybook-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      # Build the test sets from your ticket export (or commit testsets/*.json and skip this).
+      - run: uv run replaybook generate --out data/generated --seed 42 --n 3000
+      - run: uv run replaybook build-testset --type kafka_topic --data data/generated --n 40
+      # Exit 0 pass, 1 regression or critical failure, 2 error. Only differences are printed.
+      - run: uv run replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka --agent scripted
+      - run: uv run replaybook evidence --run runs/check-kafka --out evidence/kafka
+        if: always()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: replaybook-evidence
+          path: evidence/

@@ -1,0 +1,33 @@
+{
+  "self": "https://example.atlassian.net/rest/api/2/issue/INFRA-1001/changelog?startAt=0&maxResults=100",
+  "maxResults": 100,
+  "startAt": 0,
+  "total": 3,
+  "isLast": true,
+  "values": [
+    {
+      "id": "10001",
+      "author": {"self": "https://example.atlassian.net/rest/api/2/user?accountId=acc-infra-1", "accountId": "acc-infra-1", "displayName": "Infra One", "emailAddress": "infra.one@example.com", "active": true, "accountType": "atlassian"},
+      "created": "2024-03-01T10:00:30.000+0000",
+      "items": [{"field": "status", "fieldtype": "jira", "fieldId": "status", "from": "1", "fromString": "Open", "to": "10001", "toString": "Waiting for user"}]
+    },
+    {
+      "id": "10002",
+      "author": {"self": "https://example.atlassian.net/rest/api/2/user?accountId=acc-infra-1", "accountId": "acc-infra-1", "displayName": "Infra One", "emailAddress": "infra.one@example.com", "active": true, "accountType": "atlassian"},
+      "created": "2024-03-01T11:10:00.000+0000",
+      "items": [
+        {"field": "status", "fieldtype": "jira", "fieldId": "status", "from": "10001", "fromString": "Waiting for user", "to": "3", "toString": "In Progress"},
+        {"field": "assignee", "fieldtype": "jira", "fieldId": "assignee", "from": null, "fromString": null, "to": "acc-infra-1", "toString": "Infra One"}
+      ]
+    },
+    {
+      "id": "10003",
+      "author": {"self": "https://example.atlassian.net/rest/api/2/user?accountId=acc-infra-1", "accountId": "acc-infra-1", "displayName": "Infra One", "emailAddress": "infra.one@example.com", "active": true, "accountType": "atlassian"},
+      "created": "2024-03-02T15:30:00.000+0000",
+      "items": [
+        {"field": "status", "fieldtype": "jira", "fieldId": "status", "from": "3", "fromString": "In Progress", "to": "6", "toString": "Closed"},
+        {"field": "resolution", "fieldtype": "jira", "fieldId": "resolution", "from": null, "fromString": null, "to": "1", "toString": "Fixed"}
+      ]
+    }
+  ]
+}

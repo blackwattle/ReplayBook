@@ -1,0 +1,19 @@
+# Kafka administration pack: an example pack for the demo. Every tool is a local mock.
+name: kafka
+description: Mock Kafka administration (topics, ACLs, consumer groups) with a ZooKeeper-to-KRaft procedure change
+
+request_types:
+  kafka_topic:
+    label: Kafka topic + ACLs
+    keywords: [kafka, topic, acl, acls, partitions, retention]
+    strong_keywords: [kafka, acl, acls, partitions, retention]
+    components: [kafka]
+    # Recorded engineer actions with these tools identify the request type.
+    tools: [kafka_create_topic, kafka_zk_create_topic, kafka_add_acl, kafka_zk_add_acl]
+    skill: skills/kafka_topic_acls/SKILL.md
+  kafka_offset_reset:
+    label: Consumer offset reset
+    keywords: [offset, consumer group, reset, lag, replay]
+    strong_keywords: [offset, consumer group, lag]
+    components: [kafka]
+    tools: [kafka_reset_consumer_offsets]

@@ -1,0 +1,19 @@
+# Include from your .gitlab-ci.yml:
+#   include:
+#     - local: ci/gitlab-ci-replaybook-check.yml
+replaybook-check:
+  stage: test
+  image: ghcr.io/astral-sh/uv:0.13.1-python3.12-trixie-slim
+  script:
+    - uv sync
+    - uv run replaybook generate --out data/generated --seed 42 --n 3000
+    - uv run replaybook build-testset --type kafka_topic --data data/generated --n 40
+    # Exit 0 pass, 1 regression or critical failure, 2 error. Only differences are printed.
+    - uv run replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka --agent scripted
+  after_script:
+    - uv run replaybook evidence --run runs/check-kafka --out evidence/kafka || true
+  artifacts:
+    when: always
+    paths:
+      - evidence/
+    expire_in: 90 days

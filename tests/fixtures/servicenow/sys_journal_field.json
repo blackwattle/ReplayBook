@@ -1,0 +1,46 @@
+{
+  "result": [
+    {
+      "element_id": {"display_value": "a1", "value": "a1"},
+      "element": {"display_value": "work_notes", "value": "work_notes"},
+      "value": {"display_value": "Renewed via the internal CA, deployed to the LB.", "value": "Renewed via the internal CA, deployed to the LB."},
+      "sys_created_on": {"display_value": "2026-03-02 13:25:00", "value": "2026-03-02 12:25:00"},
+      "sys_created_by": {"display_value": "beth.anglin", "value": "beth.anglin"}
+    },
+    {
+      "element_id": {"display_value": "a2", "value": "a2"},
+      "element": {"display_value": "comments", "value": "comments"},
+      "value": {"display_value": "Which record type do you need, A or CNAME?", "value": "Which record type do you need, A or CNAME?"},
+      "sys_created_on": {"display_value": "2026-03-03 11:00:00", "value": "2026-03-03 10:00:00"},
+      "sys_created_by": {"display_value": "beth.anglin", "value": "beth.anglin"}
+    },
+    {
+      "element_id": {"display_value": "a2", "value": "a2"},
+      "element": {"display_value": "comments", "value": "comments"},
+      "value": {"display_value": "A CNAME to gw.example.org please.", "value": "A CNAME to gw.example.org please."},
+      "sys_created_on": {"display_value": "2026-03-04 10:00:00", "value": "2026-03-04 09:00:00"},
+      "sys_created_by": {"display_value": "carol.coughlin", "value": "carol.coughlin"}
+    },
+    {
+      "element_id": {"display_value": "a2", "value": "a2"},
+      "element": {"display_value": "comments", "value": "comments"},
+      "value": {"display_value": "Done.", "value": "Done."},
+      "sys_created_on": {"display_value": "2026-03-05 11:00:00", "value": "2026-03-05 10:00:00"},
+      "sys_created_by": {"display_value": "beth.anglin", "value": "beth.anglin"}
+    },
+    {
+      "element_id": {"display_value": "a2", "value": "a2"},
+      "element": {"display_value": "comments", "value": "comments"},
+      "value": {"display_value": "Thanks!", "value": "Thanks!"},
+      "sys_created_on": {"display_value": "2026-03-05 12:00:00", "value": "2026-03-05 11:00:00"},
+      "sys_created_by": {"display_value": "someone.else", "value": "someone.else"}
+    },
+    {
+      "element_id": {"display_value": "a4", "value": "a4"},
+      "element": {"display_value": "comments", "value": "comments"},
+      "value": {"display_value": "Which user account? Please give the user name.", "value": "Which user account? Please give the user name."},
+      "sys_created_on": {"display_value": "2026-03-06 11:00:00", "value": "2026-03-06 10:00:00"},
+      "sys_created_by": {"display_value": "beth.anglin", "value": "beth.anglin"}
+    }
+  ]
+}

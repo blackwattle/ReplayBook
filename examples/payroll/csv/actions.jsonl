@@ -1,0 +1,10 @@
+{"args": {"effective_from": "2026-03-01", "employee_id": "E1001", "hourly_rate": 45.5}, "at": "2026-01-05T12:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-100", "tool": "payroll_set_pay_rate"}
+{"args": {"effective_from": "2026-03-01", "employee_id": "E1002", "hourly_rate": 55.0}, "at": "2026-01-11T13:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-101", "tool": "payroll_set_pay_rate"}
+{"args": {"employee_id": "E1003", "hourly_rate": 41.0}, "at": "2026-01-17T14:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-102", "tool": "payroll_set_pay_rate"}
+{"args": {"effective_from": "2026-04-01", "employee_id": "E1004", "hourly_rate": 64.5}, "at": "2026-01-23T15:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-103", "tool": "payroll_set_pay_rate"}
+{"args": {"effective_from": "2026-04-15", "employee_id": "E1005", "hourly_rate": 46.0}, "at": "2026-01-30T20:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-104", "tool": "payroll_set_pay_rate"}
+{"args": {"employee_id": "E1006", "hourly_rate": 37.0}, "at": "2026-02-04T12:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-105", "tool": "payroll_set_pay_rate"}
+{"args": {"effective_from": "2026-05-01", "employee_id": "E1007", "hourly_rate": 50.0}, "at": "2026-02-10T13:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-106", "tool": "payroll_set_pay_rate"}
+{"args": {"effective_from": "2026-05-01", "employee_id": "E1008", "hourly_rate": 44.0}, "at": "2026-02-16T14:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-107", "tool": "payroll_set_pay_rate"}
+{"args": {"employee_id": "E1009", "hourly_rate": 42.5}, "at": "2026-02-23T19:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-108", "tool": "payroll_set_pay_rate"}
+{"args": {"effective_from": "2026-06-01", "employee_id": "E1010", "hourly_rate": 60.0}, "at": "2026-02-28T16:00:00+00:00", "source": "audit_log", "ticket_id": "PAY-109", "tool": "payroll_set_pay_rate"}

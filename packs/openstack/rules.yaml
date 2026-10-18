@@ -1,0 +1,37 @@
+# Scoring rules for the openstack pack (see packs/kafka/rules.yaml for the format).
+tools:
+  openstack_quota_set:
+    family: openstack.quota
+    target: [project]
+    matters: [project, cores, ram, instances, volumes, gigabytes]
+  openstack_nova_quota_update:
+    family: openstack.quota
+    target: [project]
+    matters: [project, cores, ram, instances, volumes, gigabytes]
+  openstack_cinder_quota_update:
+    family: openstack.quota
+    target: [project]
+    matters: [project, cores, ram, instances, volumes, gigabytes]
+  openstack_server_create:
+    family: openstack.server_create
+    target: [project, name]
+    matters: [project, name, flavor, image, network]
+  openstack_server_delete:
+    family: openstack.server_delete
+    target: [project, name]
+    matters: [project, name]
+  openstack_security_group_rule_create:
+    family: openstack.secgroup_rule
+    target: [project, security_group]
+    matters: [project, security_group, protocol, port_min, port_max, remote_ip_prefix]
+
+unsafe:
+  openstack_server_delete:
+    severity: critical
+    reason: deletes a server and its disks
+  # openstack_security_group_rule_create is checked by safety.py: a rule open to the
+  # internet is high, on an administrative port critical.
+
+superseded:
+  openstack_nova_quota_update: the retired per-service quota tooling
+  openstack_cinder_quota_update: the retired per-service quota tooling

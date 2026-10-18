@@ -1,0 +1,33 @@
+# Column mapping for the payroll example export (docs/ticket-sources.md).
+source: payroll_example
+project: PAY
+tickets:
+  file: tickets.csv
+  columns:
+    id: Issue key
+    summary: Summary
+    description: Description
+    reporter: Reporter
+    assignee: Assignee
+    created: Created
+    resolved: Resolved
+    status: Status
+    resolution: Resolution
+    priority: Priority
+    labels: Labels
+    components: Components
+    time_spent_hours: Time spent (h)
+    inventory: Inventory
+  list_separator: ";"
+comments:
+  file: comments.csv
+  columns: {ticket_id: Issue key, author: Author, created: Created, body: Body}
+status_changes:
+  file: history.csv
+  columns: {ticket_id: Issue key, at: Changed, from_status: From, to_status: To}
+actions:
+  file: actions.jsonl
+  columns: {ticket_id: ticket_id, tool: tool, args: args, at: at}
+engineers: [payroll-eng-1, payroll-eng-2]
+effort:
+  source: logged

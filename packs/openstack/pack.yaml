@@ -1,0 +1,24 @@
+# OpenStack pack: an example pack for the demo. Every tool is a local mock.
+name: openstack
+description: Mock OpenStack (project quotas, servers, security groups) with a per-service-to-unified quota procedure change
+
+request_types:
+  openstack_quota:
+    label: OpenStack quota increase
+    keywords: [quota, openstack, cores, ram, instances, volumes, limit]
+    strong_keywords: [quota, openstack]
+    components: [openstack]
+    tools: [openstack_quota_set, openstack_nova_quota_update, openstack_cinder_quota_update]
+    skill: skills/openstack_quota_increase/SKILL.md
+  vm_provision:
+    label: VM provisioning
+    keywords: [vm, server, instance, provision, flavor, image, build a box]
+    strong_keywords: [vm, provision, flavor]
+    components: [openstack]
+    tools: [openstack_server_create]
+  secgroup_rule:
+    label: Security group rule
+    keywords: [security group, firewall, open port, allow, ingress, cidr]
+    strong_keywords: [security group, firewall, ingress, cidr]
+    components: [openstack, network]
+    tools: [openstack_security_group_rule_create]

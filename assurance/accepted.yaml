@@ -1,0 +1,4 @@
+# Accepted differences and outdated-history markers for Replaybook.
+# Each entry needs a reason, an approver and an expiry. Expired entries stop
+# applying and the cases fail again. Edit by hand or with `replaybook accept`.
+accepted: []

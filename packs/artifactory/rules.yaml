@@ -1,0 +1,29 @@
+# Scoring rules for the artifactory pack (see packs/kafka/rules.yaml for the format).
+tools:
+  artifactory_create_repo:
+    family: artifactory.create_repo
+    target: [key]
+    matters: [key, package_type, rclass]
+    defaults: {rclass: local}
+  artifactory_delete_repo:
+    family: artifactory.delete_repo
+    target: [key]
+    matters: [key]
+  artifactory_create_permission_target:
+    family: artifactory.permission_target
+    target: [name]
+    matters: [name, repositories, groups]
+    unordered: [repositories]
+  artifactory_update_permission_target:
+    family: artifactory.permission_target
+    target: [name]
+    matters: [name, repositories, groups]
+    unordered: [repositories]
+
+unsafe:
+  artifactory_delete_repo:
+    severity: critical
+    reason: deletes a repository and every artifact in it
+  # Granting the manage permission is checked by safety.py (high).
+
+superseded: {}

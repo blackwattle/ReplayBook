@@ -1,0 +1,9 @@
+# Only what the image needs. Everything else (data, runs, caches, notes, .env) stays out.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!packs/
+**/__pycache__/
+**/*.pyc

@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+      - run: uv run replaybook demo --out demo_out
+      - run: uv run replaybook sbom --out demo_out/sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-pack-${{ matrix.os }}
+          path: demo_out/
+          if-no-files-found: ignore
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t replaybook .
+      - run: docker run --rm --network none replaybook status
+      - run: mkdir demo_out && docker run --rm --network none -v "$PWD/demo_out:/work/demo_out" replaybook
+      - run: docker run --rm --network none --entrypoint cat replaybook /app/sbom.cdx.json > demo_out/sbom-image.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: evidence-pack-image
+          path: demo_out/

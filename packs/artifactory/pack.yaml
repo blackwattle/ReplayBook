@@ -1,0 +1,16 @@
+# Artifactory pack: an example pack for the demo. Every tool is a local mock.
+name: artifactory
+description: Mock Artifactory (repositories, permission targets, groups)
+
+request_types:
+  artifactory_repo:
+    label: Artifactory repo + permissions
+    keywords: [artifactory, repo, repository, permission, publish, artifacts, package]
+    strong_keywords: [artifactory, repository, artifacts]
+    components: [artifactory]
+    # Git, GitHub and Subversion repositories are not Artifactory repositories unless the
+    # ticket says "artifactory" too.
+    exclude_keywords: [git, github, gitbox, gitlab, svn, subversion]
+    anchor_keywords: [artifactory]
+    tools: [artifactory_create_repo, artifactory_create_permission_target]
+    skill: skills/artifactory_repo_permissions/SKILL.md

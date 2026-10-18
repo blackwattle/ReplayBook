@@ -1,0 +1,93 @@
+# Replaybook, self-hosted.
+#
+#   docker compose up --build          # offline demo with no network at all -> ./demo_out
+#   podman compose up --build          # same with podman (needs docker-compose or podman-compose)
+#
+# The default service has no network (network_mode: none) and the process itself runs in
+# air-gapped mode (REPLAYBOOK_AIRGAPPED), so nothing can leave even if the image changed.
+# The optional "models" profile shows the allowlist: a local Ollama on an internal network,
+# reachable by name and nothing else.
+
+services:
+  replaybook:
+    build: .
+    image: replaybook:local
+    network_mode: none
+    environment:
+      REPLAYBOOK_AIRGAPPED: "true"
+      REPLAYBOOK_ALLOWED_HOSTS: ""
+    volumes:
+      - ./demo_out:/work/demo_out:z   # :z relabels for SELinux hosts; harmless elsewhere
+    command: ["demo", "--out", "/work/demo_out"]
+
+  # docker compose --profile models run --rm replaybook-models status
+  # docker compose --profile models run --rm replaybook-models replay --testset testsets/kafka_topic.json --out runs/kafka-skill --agent skill
+  replaybook-models:
+    profiles: [models]
+    build: .
+    image: replaybook:local
+    networks: [models]
+    depends_on: [ollama]
+    environment:
+      REPLAYBOOK_AIRGAPPED: "true"
+      REPLAYBOOK_ALLOWED_HOSTS: "ollama:11434"
+      OLLAMA_API_BASE: "http://ollama:11434"
+      REPLAYBOOK_MODEL_FAST: "${REPLAYBOOK_MODEL_FAST:-ollama/llama3.1}"
+      REPLAYBOOK_MODEL_STRONG: "${REPLAYBOOK_MODEL_STRONG:-ollama/llama3.1}"
+      REPLAYBOOK_MAX_SPEND_USD: "${REPLAYBOOK_MAX_SPEND_USD:-20}"
+    volumes:
+      - ./:/work:z
+    command: ["status"]
+
+  # Load a model into the volume once, from a container that does have the internet:
+  #   docker run --rm -v replaybook_ollama:/root/.ollama docker.io/ollama/ollama:0.40.6 pull llama3.1
+  ollama:
+    profiles: [models]
+    image: docker.io/ollama/ollama:0.40.6
+    networks: [models]
+    volumes:
+      - ollama:/root/.ollama
+
+  # Public Jira Dataset (Zenodo 10.5281/zenodo.5882881): restore only the collection you
+  # need into a local MongoDB, then export one project as canonical tickets.
+  #   docker compose --profile jira up -d mongo
+  #   JIRA_DUMP_DIR=/path/to/DataDump docker compose --profile jira run --rm jira-restore
+  #   docker compose --profile jira run --rm replaybook-jira public-jira export \
+  #       --input "mongodb://mongo:27017/JiraReposAnon?collection=Apache" --project INFRA \
+  #       --out /work/data/public_jira/infra
+  mongo:
+    profiles: [jira]
+    image: docker.io/library/mongo:7.0
+    volumes:
+      - mongo:/data/db
+  jira-restore:
+    profiles: [jira]
+    image: docker.io/library/mongo:7.0
+    depends_on: [mongo]
+    volumes:
+      - ${JIRA_DUMP_DIR:-./data/public_jira/dump}:/dump:ro,z
+    entrypoint: ["mongorestore"]
+    command:
+      - "--host=mongo"
+      - "--gzip"
+      - "--archive=/dump/mongodump-JiraReposAnon.archive"
+      - "--nsInclude=JiraReposAnon.${JIRA_COLLECTION:-Apache}"
+      - "--numParallelCollections=1"
+  replaybook-jira:
+    profiles: [jira]
+    build: .
+    image: replaybook:local
+    depends_on: [mongo]
+    environment:
+      REPLAYBOOK_AIRGAPPED: "true"
+      REPLAYBOOK_ALLOWED_HOSTS: "mongo:27017"
+    volumes:
+      - ./:/work:z
+
+networks:
+  models:
+    internal: true   # no route out; only the two containers on it can talk to each other
+
+volumes:
+  ollama:
+  mongo:

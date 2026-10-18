@@ -1,0 +1,17 @@
+Issue key,Author,Created,Body
+PAY-100,payroll-eng-1,2026-01-05T12:20:00+00:00,"Done, rate updated."
+PAY-101,payroll-eng-1,2026-01-11T13:20:00+00:00,"Done, rate updated."
+PAY-102,payroll-eng-1,2026-01-17T14:20:00+00:00,"Done, rate updated."
+PAY-103,payroll-eng-1,2026-01-23T15:20:00+00:00,"Done, rate updated."
+PAY-104,payroll-eng-1,2026-01-29T16:00:00+00:00,What is the new hourly rate for E1005? It is not in the ticket.
+PAY-104,hr.partner,2026-01-30T19:00:00+00:00,"Sorry, it is $46.00 per hour."
+PAY-104,payroll-eng-1,2026-01-30T20:20:00+00:00,"Done, rate updated."
+PAY-105,payroll-eng-1,2026-02-04T12:20:00+00:00,"Done, rate updated."
+PAY-106,payroll-eng-1,2026-02-10T13:20:00+00:00,"Done, rate updated."
+PAY-107,payroll-eng-1,2026-02-16T14:20:00+00:00,"Done, rate updated."
+PAY-108,payroll-eng-1,2026-02-22T15:00:00+00:00,What is the new hourly rate for E1009? It is not in the ticket.
+PAY-108,hr.partner,2026-02-23T18:00:00+00:00,"Sorry, it is $42.50 per hour."
+PAY-108,payroll-eng-1,2026-02-23T19:20:00+00:00,"Done, rate updated."
+PAY-109,payroll-eng-1,2026-02-28T16:20:00+00:00,"Done, rate updated."
+PAY-110,payroll-eng-2,2026-03-09T14:00:00+00:00,Closing.
+PAY-111,payroll-eng-2,2026-03-15T14:00:00+00:00,Closing.

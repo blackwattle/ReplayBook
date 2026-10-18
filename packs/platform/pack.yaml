@@ -1,0 +1,30 @@
+# Platform pack: DNS, TLS certificates, access groups and CI settings. An example pack for
+# the demo; every tool is a local mock.
+name: platform
+description: Mock platform services (DNS zones, managed certificates, access groups, CI variables and runners)
+
+request_types:
+  cert_renewal:
+    label: TLS certificate renewal
+    keywords: [cert, certificate, tls, ssl, expires, expiry, renew, renewal]
+    strong_keywords: [cert, certificate, tls, ssl]
+    components: [certificates]
+    tools: [platform_cert_renew]
+  dns_change:
+    label: DNS change
+    keywords: [dns, record, cname, a record, resolve, hostname]
+    strong_keywords: [dns, cname, a record]
+    components: [dns]
+    tools: [platform_dns_upsert_record]
+  group_access:
+    label: Group access request
+    keywords: [access request, group access, add a user, membership, add me, member, join, joined, "user:"]
+    strong_keywords: [membership, group access, access request]
+    components: [access]
+    tools: [platform_group_add_member]
+  ci_fix:
+    label: CI variable or runner fix
+    keywords: [pipeline, ci, variable, runner, gitlab, build failing]
+    strong_keywords: [pipeline, ci, runner, gitlab]
+    components: [ci]
+    tools: [platform_ci_set_variable]

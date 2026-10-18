@@ -1,0 +1,15 @@
+# What a person adds to the pack that `replaybook tools import` generated for the payroll
+# server: the request type this team wants to test, with the words that identify it in a
+# ticket and the tool whose recorded use types a ticket. tools.json and rules.yaml are the
+# generated ones; agent.py and skills/ come from this overlay too.
+name: payroll
+description: Recording mock of the payroll tools (imported); pay rate changes are the tested request type
+
+request_types:
+  pay_rate_change:
+    label: Pay rate change
+    keywords: [pay rate, hourly rate, rate change, payroll, per hour, salary]
+    strong_keywords: [pay rate, hourly rate, rate change]
+    components: [payroll]
+    tools: [payroll_set_pay_rate]
+    skill: skills/pay_rate_change/SKILL.md
