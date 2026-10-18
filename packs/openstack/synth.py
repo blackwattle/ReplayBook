@@ -11,7 +11,7 @@ from typing import Any
 from replaybook.schema.ground_truth import ActionSpec
 from replaybook.synth import names
 from replaybook.synth.names import pick, weighted
-from replaybook.synth.types import Mistake, Params, RequestType, current_version
+from replaybook.synth.types import Mistake, Params, RequestType, Unusual, current_version
 
 OPENSTACK_UNIFIED_QUOTA_SINCE = datetime(2026, 2, 15, tzinfo=UTC)
 FLAVORS = ("m1.small", "m1.medium", "m1.large", "c2.xlarge", "r3.large", "r3.2xlarge")
@@ -122,6 +122,21 @@ def _quota_mistake(p: Params, _rng: random.Random) -> Mistake:
     return wrong, what
 
 
+def _quota_unusual(p: Params, version: str, rng: random.Random) -> Unusual:
+    """Also raise the same limit on another team's project: not the requester's to ask for,
+    so engineers checked with that team first (a second quota change)."""
+    other_team = pick(rng, [t for t in names.TEAMS if t != p["team"]])
+    other_project = names.project_name(other_team, p["env"])
+    return Unusual(
+        cue=(
+            f"Please also raise the same limit on {other_project}, which belongs to the "
+            f"{other_team} team."
+        ),
+        actions=_quota_actions({**p, "project": other_project}, version),
+        params={"other_project": other_project},
+    )
+
+
 OPENSTACK_QUOTA = RequestType(
     key="openstack_quota",
     label="OpenStack quota increase",
@@ -158,6 +173,7 @@ OPENSTACK_QUOTA = RequestType(
     mistake=_quota_mistake,
     components=("openstack",),
     procedure_version=_quota_version,
+    unusual=_quota_unusual,
 )
 
 

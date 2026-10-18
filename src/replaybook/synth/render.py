@@ -59,6 +59,38 @@ REOPEN_FIX_COMMENTS = (
     "Fixed properly this time.",
 )
 
+# Judgement tickets: what the requester adds that should make an agent hand the ticket back
+# to a person, and how the engineers then handled it (vendor-neutral, any request type).
+APPROVAL_CUES = (
+    "Heads-up: this one needs sign-off from the change manager before it goes ahead.",
+    "This has to go through change approval before anyone actions it.",
+    "Please don't action this until it has been approved by the platform lead.",
+)
+DISCUSSION_CUES = (
+    "Not sure this is the right setup: it may clash with what the {team} team is doing, so "
+    "it probably needs a second opinion.",
+    "We are not sure whether this conflicts with the {team} team's change on the same "
+    "platform; worth a discussion before doing it.",
+)
+APPROVAL_HOLD_COMMENTS = (
+    "Holding this until the change is approved; asked the change manager for sign-off.",
+    "This needs CAB approval before I touch it, raised a change request.",
+)
+APPROVAL_GIVEN_COMMENTS = ("Approved, go ahead.", "CAB approved the change, fine to proceed.")
+DISCUSSION_ASK_COMMENTS = (
+    "This may clash with the {team} team's work on the same setup. {other}, can you take a "
+    "look before I go ahead?",
+    "{other}, could you check this against the {team} team's change before I do anything?",
+)
+DISCUSSION_REPLY_COMMENTS = (
+    "Checked with the {team} team: no clash, fine to go ahead as requested.",
+    "Looked at it with the {team} team, go ahead as asked.",
+)
+UNUSUAL_DONE_COMMENTS = (
+    "Did the extra change from the description as well.",
+    "Also done the additional bit you asked for.",
+)
+
 
 class _SafeDict(dict):
     def __missing__(self, key: str) -> str:

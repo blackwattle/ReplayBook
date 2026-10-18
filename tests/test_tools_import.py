@@ -99,6 +99,7 @@ def test_import_from_saved_json_writes_a_usable_pack(
         assert names == {
             "ticket_get",
             "ticket_ask_requester",
+            "ticket_escalate",
             "ticket_comment",
             "knowledge_search_tickets",
             "knowledge_get_ticket",

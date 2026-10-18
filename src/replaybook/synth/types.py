@@ -2,15 +2,16 @@
 
 Each type says how to sample realistic parameters, which tool calls are correct under
 which procedure version, how requesters phrase the request, what inventory the ticket
-sees, and what a plausible human mistake looks like. The generator uses all of it; the
-request type's key, label and keywords for classification live in the pack's manifest.
+sees, what a plausible human mistake looks like and, optionally, what an unusual request
+beyond the skill looks like. The generator uses all of it; the request type's key, label
+and keywords for classification live in the pack's manifest.
 """
 
 from __future__ import annotations
 
 import random
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,6 +22,17 @@ TIMELINE_END = datetime(2026, 9, 30, tzinfo=UTC)
 
 Params = dict[str, Any]
 Mistake = tuple[Params, str] | None
+
+
+@dataclass(frozen=True)
+class Unusual:
+    """A request that goes beyond the skill's usual pattern: the sentence the requester adds,
+    the extra actions engineers took once someone had decided to do it, and any parameters
+    those need (kept in the ground truth)."""
+
+    cue: str
+    actions: list[ActionSpec]
+    params: Params = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,10 @@ class RequestType:
     # Extra template placeholders derived from the parameters (for example a verb phrase
     # for an access level).
     derived: Callable[[Params], dict[str, Any]] | None = None
+    # A request beyond the skill for the "unusual" judgement tickets:
+    # unusual(params, procedure_version, rng). Types without one get only the approval and
+    # discussion kinds of judgement ticket.
+    unusual: Callable[[Params, str, random.Random], Unusual] | None = None
 
     def version_at(self, at: datetime) -> str:
         return self.procedure_version(at)

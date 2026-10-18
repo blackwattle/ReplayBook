@@ -24,12 +24,19 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from replaybook.agents.base import AgentUnderTest
+from replaybook.checks import checks_for, planned_checks, require_valid_skill
 from replaybook.classify import classify
 from replaybook.eval.extract import Extractor
 from replaybook.eval.groups import FailureGroup, group_failures
 from replaybook.eval.runner import RunSummary, compute_fingerprint, summarise
-from replaybook.eval.scoring import CaseResult, score_case
-from replaybook.eval.testset import expectation_for, seed_inventory, type_of, visible_tags
+from replaybook.eval.scoring import UNSAFE_REASONS, CaseResult, score_case
+from replaybook.eval.testset import (
+    expectation_for,
+    pattern_for,
+    seed_inventory,
+    type_of,
+    visible_tags,
+)
 from replaybook.mock_env.knowledge import Corpus
 from replaybook.mock_env.recorder import RecordedCall
 from replaybook.mock_env.registry import (
@@ -40,6 +47,7 @@ from replaybook.mock_env.registry import (
 from replaybook.mock_env.world import WorldState
 from replaybook.schema.testcase import TestCase
 from replaybook.schema.ticket import Ticket
+from replaybook.skills import skill_identity
 
 PROPOSALS_FILE = "proposals.jsonl"
 SCORES_FILE = "scores.jsonl"
@@ -63,6 +71,11 @@ class Proposal(BaseModel):
     agent_error: str | None = None
     transcript: list[dict[str, Any]] = Field(default_factory=list)
     knowledge: str | None = None
+    # The request type's skill when the proposal was recorded (None before spec v5), and
+    # each proposed write with the check that would confirm it live (never run).
+    skill: str | None = None
+    skill_version: str | None = None
+    planned_checks: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -159,8 +172,12 @@ def record(
     tools adds nothing; a changed agent records a new proposal next to the old one."""
     shadow_dir = Path(shadow_dir)
     now = now or datetime.now(UTC)
-    tool_fp = tool_schema_fingerprint(describe_all_tools())
-    fingerprint = compute_fingerprint(dict(agent.config), "shadow", tool_fp)
+    described = describe_all_tools()
+    require_valid_skill(request_type, described)
+    checks = checks_for(request_type)
+    tool_fp = tool_schema_fingerprint(described)
+    skill = skill_identity(request_type)
+    fingerprint = compute_fingerprint(dict(agent.config), "shadow", tool_fp, skill["skill_version"])
     existing = {p.key for p in load_proposals(shadow_dir)}
     candidates = open_tickets(tickets, request_type)
     new: list[Proposal] = []
@@ -202,6 +219,9 @@ def record(
                 agent_error=error,
                 transcript=transcript,
                 knowledge=str(knowledge.path) if knowledge and knowledge.path else None,
+                skill=skill["skill"],
+                skill_version=skill["skill_version"],
+                planned_checks=planned_checks(checks, env.recorder.writes),
             )
         )
     _append_jsonl(shadow_dir / PROPOSALS_FILE, new)
@@ -234,6 +254,7 @@ def score(
     done = {(s.ticket_id, s.fingerprint) for s in load_scores(shadow_dir)}
     new: list[Score] = []
     pending = unscorable = 0
+    patterns: dict[str, Any] = {}
     for proposal in load_proposals(shadow_dir):
         if proposal.key in done:
             continue
@@ -244,7 +265,11 @@ def score(
         if ticket.resolution not in (None, "Done", "Fixed"):
             unscorable += 1  # duplicates, won't-do: history holds no procedure to compare with
             continue
-        expectation = expectation_for(ticket, proposal.request_type, extractor)
+        if proposal.request_type not in patterns:
+            patterns[proposal.request_type] = pattern_for(tickets, proposal.request_type)
+        expectation = expectation_for(
+            ticket, proposal.request_type, extractor, patterns[proposal.request_type]
+        )
         if expectation is None:
             unscorable += 1
             continue
@@ -266,6 +291,7 @@ def score(
             agent_error=proposal.agent_error,
         )
         result.transcript = proposal.transcript
+        result.planned_checks = list(proposal.planned_checks)
         new.append(
             Score(
                 ticket_id=ticket.id,
@@ -309,19 +335,19 @@ def build_report(shadow_dir: Path, tickets: list[Ticket] | None = None) -> Shado
     unsafe = [
         {
             "ticket_id": s.ticket_id,
-            "severity": s.result.severity,
+            "severity": s.result.severity or "unsafe",
             "tools": sorted(
                 {
                     d.tool_actual
                     for d in s.result.diffs
-                    if d.kind == "unsafe_action" and d.tool_actual
+                    if d.kind in UNSAFE_REASONS and d.tool_actual
                 }
             ),
-            "detail": next((d.detail for d in s.result.diffs if d.kind == "unsafe_action"), ""),
+            "detail": s.result.first_note(),
             "resolved_at": s.resolved_at.isoformat(),
         }
         for s in scores
-        if any(d.kind == "unsafe_action" for d in s.result.diffs)
+        if s.result.outcome == "unsafe"
     ]
     agents: dict[str, dict[str, Any]] = {}
     for p in proposals:

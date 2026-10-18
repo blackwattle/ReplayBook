@@ -9,7 +9,7 @@ import pytest
 from replaybook.adapters.synthetic import load_platform, load_tickets
 from replaybook.agents.external import ExternalAgent
 from replaybook.agents.scripted import FLAWS, ScriptedAgent, supported_types
-from replaybook.agents.skill_agent import SkillAgent
+from replaybook.agents.skill_agent import SkillAgent, text_tool_call
 from replaybook.classify import classify
 from replaybook.eval.ground_truth import load_ground_truth
 from replaybook.llm.client import LLMClient, LLMConfig, LLMResponse, ModelUnavailable
@@ -60,6 +60,7 @@ def test_fixed_agent_matches_history_on_complete_current_tickets(
     small_dataset: Path, request_type: str
 ) -> None:
     agent = ScriptedAgent()
+    truth = load_ground_truth(small_dataset)
     matched = total = 0
     for ticket in _tickets_of_type(small_dataset, request_type):
         if not ticket.actions or _waiting(ticket) or ticket.resolution == "Duplicate":
@@ -70,6 +71,11 @@ def test_fixed_agent_matches_history_on_complete_current_tickets(
             continue
         env = _env_for(ticket, small_dataset)
         result = agent.run(env)
+        if truth[ticket.id].expected_outcome == "escalate":
+            # The ticket needed a person's judgement: the agent hands it back, writes nothing.
+            assert result.stopped_reason == "escalated", (ticket.id, result)
+            assert [w.tool for w in env.recorder.writes] == ["ticket_escalate"], ticket.id
+            continue
         assert result.stopped_reason == "done", (ticket.id, result)
         expected = sorted(_normalised(a.tool, a.args) for a in ticket.actions)
         total += 1
@@ -147,7 +153,13 @@ def test_unsafe_write_flaw_deletes_existing_topics(small_dataset: Path) -> None:
 def test_unknown_flaw_is_rejected() -> None:
     with pytest.raises(ValueError):
         ScriptedAgent(flaws=["make_coffee"])
-    assert set(FLAWS) == {"guess_missing_info", "superseded_procedure", "unsafe_write"}
+    assert set(FLAWS) == {
+        "guess_missing_info",
+        "superseded_procedure",
+        "unsafe_write",
+        "never_escalates",
+        "escalates_too_often",
+    }
 
 
 def test_llm_client_offline_without_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,6 +233,36 @@ def test_skill_agent_runs_tool_calls_from_the_model(small_dataset: Path) -> None
     )
     assert "KRaft" in llm.calls[0]["messages"][0]["content"]
     assert agent.config["skill_sha256"] and agent.config["model"] == "fake/strong"
+    # Offered: the ticket and knowledge tools plus the pack that owns the request type.
+    offered = {t["function"]["name"] for t in llm.calls[0]["tools"]}
+    assert agent.config["servers"] == ["ticket", "knowledge", "kafka"]
+    assert {"ticket_get", "ticket_ask_requester", "knowledge_search_tickets"} <= offered
+    assert all(name.split("_")[0] in ("ticket", "knowledge", "kafka") for name in offered)
+
+
+def test_skill_agent_reports_a_tool_call_written_as_text(small_dataset: Path) -> None:
+    """A model route without tool calling hands the call back as JSON text. That is an
+    error with a hint, not a case where the agent chose to do nothing."""
+    ticket = next(t for t in _tickets_of_type(small_dataset, "kafka_topic") if not _waiting(t))
+    env = _env_for(ticket, small_dataset)
+    written = '{"type": "function", "name": "kafka_create_topic", "parameters": {"topic": "x"}}'
+    result = SkillAgent("kafka_topic", FakeLLM(responses=[text_response(written)])).run(env)
+    assert result.stopped_reason == "error" and not env.recorder.writes
+    assert "kafka_create_topic as text" in (result.error or "")
+    assert "ollama_chat/" in (result.error or "")
+
+    assert text_tool_call('```json\n[{"function": {"name": "a_b"}}]\n```', {"a_b"}) == "a_b"
+    # What llama3.1 on Ollama wrote: the plan in prose, then each call as a JSON block.
+    planned = (
+        "Here's the step-by-step process:\n1. `a_b` for the cluster.\n\n"
+        'Here are the function calls:\n```\n{"name": "a_b", "parameters": {"c": "x"}}\n```'
+    )
+    assert text_tool_call(planned, {"a_b"}) == "a_b"
+    assert text_tool_call('{"name": "not_a_tool"} and {"oops"', {"a_b"}) is None
+    assert text_tool_call("Done. I created the topic.", {"a_b"}) is None
+    env = _env_for(ticket, small_dataset)
+    result = SkillAgent("kafka_topic", FakeLLM(responses=[text_response("All done.")])).run(env)
+    assert result.stopped_reason == "done" and result.error is None
 
 
 def test_skill_agent_stops_after_asking_and_reports_offline(small_dataset: Path) -> None:

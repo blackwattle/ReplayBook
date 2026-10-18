@@ -25,27 +25,46 @@ services:
   # docker compose --profile models run --rm replaybook-models replay --testset testsets/kafka_topic.json --out runs/kafka-skill --agent skill
   replaybook-models:
     profiles: [models]
-    build: .
-    image: replaybook:local
+    build:
+      context: .
+      args:
+        EXTRAS: "jira models"   # the LiteLLM agent needs the models extra; the default image has none
+    image: replaybook:models
     networks: [models]
     depends_on: [ollama]
     environment:
       REPLAYBOOK_AIRGAPPED: "true"
       REPLAYBOOK_ALLOWED_HOSTS: "ollama:11434"
       OLLAMA_API_BASE: "http://ollama:11434"
-      REPLAYBOOK_MODEL_FAST: "${REPLAYBOOK_MODEL_FAST:-ollama/llama3.1}"
-      REPLAYBOOK_MODEL_STRONG: "${REPLAYBOOK_MODEL_STRONG:-ollama/llama3.1}"
+      # ollama_chat/ is Ollama's chat endpoint, which returns tool calls as tool calls.
+      REPLAYBOOK_MODEL_FAST: "${REPLAYBOOK_MODEL_FAST:-ollama_chat/llama3.1}"
+      REPLAYBOOK_MODEL_STRONG: "${REPLAYBOOK_MODEL_STRONG:-ollama_chat/llama3.1}"
       REPLAYBOOK_MAX_SPEND_USD: "${REPLAYBOOK_MAX_SPEND_USD:-20}"
+      # A gateway instead of the local Ollama: set both, and add its host to the allowlist.
+      REPLAYBOOK_MODEL_API_BASE: "${REPLAYBOOK_MODEL_API_BASE:-}"
+      REPLAYBOOK_MODEL_API_KEY: "${REPLAYBOOK_MODEL_API_KEY:-}"
     volumes:
       - ./:/work:z
     command: ["status"]
 
-  # Load a model into the volume once, from a container that does have the internet:
-  #   docker run --rm -v replaybook_ollama:/root/.ollama docker.io/ollama/ollama:0.40.6 pull llama3.1
+  # Load a model into the volume once, from a container that does have the internet (the
+  # ollama CLI needs a running server, so start one on the default network, pull, remove it):
+  #   docker run -d --name ollama-pull -v replaybook_ollama:/root/.ollama docker.io/ollama/ollama:0.40.6
+  #   docker exec ollama-pull ollama pull llama3.1
+  #   docker rm -f ollama-pull
   ollama:
     profiles: [models]
     image: docker.io/ollama/ollama:0.40.6
     networks: [models]
+    environment:
+      # The skill agent's first prompt (skill, ticket, one pack's tools) is about 2,000 tokens
+      # and every tool result adds more. Without a GPU, Ollama defaults to 4,096 and cuts a
+      # longer prompt without an error.
+      OLLAMA_CONTEXT_LENGTH: "8192"
+      OLLAMA_NUM_PARALLEL: "1"
+      # Ollama looks up ollama.com at start (cloud models, recommendations); the internal
+      # network refuses it anyway, and this stops it asking.
+      OLLAMA_NO_CLOUD: "1"
     volumes:
       - ollama:/root/.ollama
 

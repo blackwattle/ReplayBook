@@ -105,6 +105,7 @@ def sync_test_set(
     selection["synced_through"] = entry["through_after"]
     selection["sync"] = [*selection.get("sync", []), entry]
     selection["ask_cases"] = sum(c.expectation.kind == "ask" for c in cases)
+    selection["escalate_cases"] = sum(c.expectation.outcome == "escalate" for c in cases)
     selection["unverified"] = sum(not c.expectation.verified for c in cases)
     updated = test_set.model_copy(
         update={

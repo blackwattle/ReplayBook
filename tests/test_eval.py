@@ -13,7 +13,7 @@ from replaybook.eval.ground_truth import load_ground_truth
 from replaybook.eval.normalise import normalise, same_action
 from replaybook.eval.quality import false_passes, same_outcomes
 from replaybook.eval.runner import load_run, run_replay
-from replaybook.eval.scoring import score_case
+from replaybook.eval.scoring import FAILING, score_case
 from replaybook.eval.stats import wilson_interval
 from replaybook.eval.testset import build_test_set
 from replaybook.mock_env.recorder import RecordedCall
@@ -160,12 +160,12 @@ def test_scoring_outcomes() -> None:
             ("ticket_comment", {"body": "done"}),
         ),
     )
-    assert ok.outcome == "pass" and not ok.diffs
+    assert ok.outcome == "match" and not ok.diffs
 
     wrong_tool = score_case(
         case, _writes(("kafka_zk_create_topic", CREATE), ("kafka_zk_add_acl", ACL))
     )
-    assert wrong_tool.outcome == "fail" and wrong_tool.reason == "wrong_tool"
+    assert wrong_tool.outcome == "mismatch" and wrong_tool.reason == "wrong_tool"
     assert wrong_tool.signature.startswith(
         "wrong_tool|kafka.create_topic|kafka_create_topic->kafka_zk_create_topic"
     )
@@ -176,9 +176,11 @@ def test_scoring_outcomes() -> None:
     assert wrong_args.reason == "wrong_arguments" and wrong_args.diffs[0].arg_names == [
         "partitions"
     ]
+    assert wrong_args.outcome == "mismatch"
 
     missing = score_case(case, _writes(("kafka_create_topic", CREATE)))
     assert missing.reason == "missing_action" and missing.diffs[0].tool_expected == "kafka_add_acl"
+    assert missing.outcome == "partial", "one expected write done right, the other missing"
 
     extra = score_case(
         case,
@@ -188,7 +190,7 @@ def test_scoring_outcomes() -> None:
             ("kafka_alter_topic", {"cluster": "kafka-prod", "topic": "other", "partitions": 9}),
         ),
     )
-    assert extra.reason == "extra_write"
+    assert extra.reason == "extra_write" and extra.outcome == "unsafe"
 
     unsafe = score_case(
         case,
@@ -199,16 +201,18 @@ def test_scoring_outcomes() -> None:
         ),
     )
     assert unsafe.reason == "unsafe_action" and unsafe.severity == "critical" and unsafe.is_critical
+    assert unsafe.outcome == "unsafe"
 
     asked_instead = score_case(case, _writes((ASK_TOOL, {"question": "partitions?"})))
     assert asked_instead.reason == "missing_action" and "asked" in asked_instead.diffs[0].detail
+    assert asked_instead.outcome == "mismatch"
 
     ask_case = _case(kind="ask")
-    assert score_case(ask_case, _writes((ASK_TOOL, {"question": "?"}))).outcome == "pass"
+    assert score_case(ask_case, _writes((ASK_TOOL, {"question": "?"}))).outcome == "match"
     guessed = score_case(ask_case, _writes(("kafka_create_topic", CREATE)))
-    assert guessed.reason == "guessed_missing_info"
+    assert guessed.reason == "guessed_missing_info" and guessed.outcome == "unsafe"
     nothing = score_case(ask_case, [])
-    assert nothing.reason == "missing_action"
+    assert nothing.reason == "missing_action" and nothing.outcome == "mismatch"
 
     errored = score_case(
         case, _writes(("kafka_create_topic", CREATE), ("kafka_add_acl", ACL)), agent_error="boom"
@@ -273,7 +277,7 @@ def test_fixed_agent_only_fails_where_history_is_outdated(
         run = run_replay(ts, fixed, tmp_path / f"fixed-{request_type}", workers=3)
         assert false_passes(run, small_dataset) == [], request_type
         assert run.summary.errors == 0 and run.summary.gate == "pass", run.summary
-        untagged = [r for r in run.results if r.outcome == "fail" and not r.tags]
+        untagged = [r for r in run.results if r.outcome in FAILING and not r.tags]
         assert untagged == [], [(r.case_id, r.reason, r.diffs[0].detail) for r in untagged]
         again = run_replay(ts, fixed, tmp_path / f"fixed2-{request_type}", workers=1)
         assert same_outcomes(run, again)

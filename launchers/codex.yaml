@@ -1,0 +1,44 @@
+# OpenAI Codex CLI as the agent under test, in non-interactive mode (codex exec).
+#
+# Checked against `codex exec --help` of codex-cli 0.162.0 on 2026-10-18. Flags change
+# between versions: `replaybook launchers show codex` prints the exact command that would
+# run so you can compare it with `codex exec --help`, and this file is yours to edit.
+#
+# How it is kept inside the recording: the MCP servers are passed as -c overrides
+# (mcp_servers.<name>.command and .args; the values are TOML, which the JSON Replaybook
+# writes satisfies), the user's own config.toml is not loaded (--ignore-user-config, so
+# none of their MCP servers come along; their login still works), no session files are
+# written (--ephemeral), the sandbox is read-only, approvals are never asked for (there is
+# nobody to answer) and web search stays off (it needs --search).
+name: codex
+description: Codex CLI non-interactive (codex exec), MCP servers through -c overrides, read-only sandbox
+docs: https://github.com/openai/codex/blob/main/docs/config.md
+checked: "2026-10-18"
+command:
+  - codex
+  - exec
+  - --skip-git-repo-check
+  - --ignore-user-config
+  - --ephemeral
+  - --sandbox
+  - read-only
+  - -c
+  - approval_policy="never"
+  - "{server_args}"
+  - "{prompt}"
+mcp_config:
+  pass: flags
+  per_server_args:
+    - -c
+    - mcp_servers.{server}.command={command_json}
+    - -c
+    - mcp_servers.{server}.args={args_json}
+prompt:
+  pass: argument
+disabled_tools:
+  - web_search
+limitations: >
+  The shell tool cannot be switched off. The read-only sandbox stops it writing files or
+  reaching the network, but a command it runs to read something is not in the recording;
+  the evidence pack only sees calls to the mock servers.
+timeout_s: 900

@@ -1,10 +1,11 @@
 """Accepted differences: reviewed failures that should not count, for a limited time.
 
 `assurance/accepted.yaml` records who accepted what, why and until when. An acceptance can
-cover one case or every case with the same failure signature. Expired acceptances stop
-applying and the cases fail again. The same file marks historical tickets whose procedure
-is outdated (`kind: outdated_history`), which is the honest way to handle history that no
-longer reflects how the platform works.
+cover one case or every case with the same failure signature, and only ever turns a
+mismatch or a partial into accepted (never unsafe, error or an escalation outcome).
+Expired acceptances stop applying and the cases fail again. The same file marks historical
+tickets whose procedure is outdated (`kind: outdated_history`), which is the honest way to
+handle history that no longer reflects how the platform works.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from replaybook.eval.scoring import CaseResult
+from replaybook.eval.scoring import ACCEPTABLE, CaseResult
 
 DEFAULT_PATH = Path("assurance/accepted.yaml")
 Scope = Literal["case", "signature"]
@@ -125,19 +126,28 @@ class AcceptedDifferences(BaseModel):
 def apply_accepted(
     results: list[CaseResult], accepted: AcceptedDifferences, today: date | None = None
 ) -> list[CaseResult]:
-    """Turn covered failures into 'accepted'. Expired coverage leaves them failed with a note."""
+    """Turn covered mismatches and partials into 'accepted'. Expired coverage leaves them
+    failed with a note. Unsafe, error and escalation outcomes are never accepted: an
+    acceptance says history was outdated or wrong, which cannot excuse those."""
     today = today or date.today()
     updated: list[CaseResult] = []
     for result in results:
-        if result.outcome in ("fail", "accepted"):
+        scored = result.accepted_from if result.outcome == "accepted" else result.outcome
+        if scored in ACCEPTABLE:
             base = result.model_copy(
-                update={"outcome": "fail", "accepted_by": None, "accepted_reason": None}
+                update={
+                    "outcome": scored,
+                    "accepted_by": None,
+                    "accepted_reason": None,
+                    "accepted_from": None,
+                }
             )
             active, expired = accepted.find(base, today)
             if active is not None:
                 base = base.model_copy(
                     update={
                         "outcome": "accepted",
+                        "accepted_from": scored,
                         "accepted_by": (
                             f"{active.approver} ({active.id}, until {active.expires.isoformat()})"
                         ),
@@ -160,10 +170,11 @@ def apply_accepted(
 
 
 def suggest(results: list[CaseResult]) -> list[dict[str, Any]]:
-    """Failing cases whose visible tags say history itself may be outdated or wrong."""
+    """Mismatched or partial cases whose visible tags say history itself may be outdated or
+    wrong."""
     suggestions = []
     for r in results:
-        if r.outcome != "fail" or not r.tags:
+        if r.outcome not in ACCEPTABLE or not r.tags:
             continue
         if "pre-procedure-change" in r.tags:
             why = "ticket predates a procedure change for this request type"

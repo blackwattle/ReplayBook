@@ -13,7 +13,7 @@ from typing import Any
 from replaybook.schema.ground_truth import ActionSpec
 from replaybook.synth import names
 from replaybook.synth.names import pick, weighted
-from replaybook.synth.types import Mistake, Params, RequestType, current_version
+from replaybook.synth.types import Mistake, Params, RequestType, Unusual, current_version
 
 KAFKA_KRAFT_SINCE = datetime(2025, 12, 1, tzinfo=UTC)
 ENV_CLUSTER = {"dev": "kafka-dev", "test": "kafka-dev", "uat": "kafka-uat", "prod": "kafka-prod"}
@@ -152,6 +152,26 @@ def _kafka_topic_mistake(p: Params, rng: random.Random) -> Mistake:
     return wrong, what
 
 
+def _kafka_topic_unusual(p: Params, _version: str, rng: random.Random) -> Unusual:
+    """Also raise the partitions of an existing topic: the skill leaves existing topics as
+    they are, so engineers decided it case by case (kafka_alter_topic)."""
+    other = f"{p['service']}.{pick(rng, ('legacy', 'archive', 'replay'))}.v{rng.randint(1, 3)}"
+    partitions = pick(rng, (12, 24, 48))
+    return Unusual(
+        cue=(
+            f"While you are at it, please also increase the partitions on our existing topic "
+            f"{other} to {partitions}."
+        ),
+        actions=[
+            ActionSpec(
+                tool="kafka_alter_topic",
+                args={"cluster": p["cluster"], "topic": other, "partitions": partitions},
+            )
+        ],
+        params={"other_topic": other, "other_partitions": partitions},
+    )
+
+
 KAFKA_TOPIC = RequestType(
     key="kafka_topic",
     label="Kafka topic + ACLs",
@@ -208,6 +228,7 @@ KAFKA_TOPIC = RequestType(
     procedure_version=_kafka_version,
     unsafe_trigger_field="topic_exists",
     derived=_derived,
+    unusual=_kafka_topic_unusual,
 )
 
 

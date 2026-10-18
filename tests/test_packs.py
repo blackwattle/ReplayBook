@@ -162,6 +162,7 @@ def test_recording_mock_from_tools_json(tmp_path: Path, monkeypatch: pytest.Monk
         assert env.kinds == {
             "ticket_get": "read",
             "ticket_ask_requester": "write",
+            "ticket_escalate": "write",
             "ticket_comment": "write",
             "knowledge_search_tickets": "read",
             "knowledge_get_ticket": "read",

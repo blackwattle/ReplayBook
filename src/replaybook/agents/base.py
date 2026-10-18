@@ -22,6 +22,10 @@ class AgentRunResult(BaseModel):
     stopped_reason: str = "done"
     error: str | None = None
     model: str | None = None
+    # Model calls the agent made for this case (see llm.client.usage_summary): how many,
+    # what they cost where known, how many could not be priced. None for agents without a
+    # model (scripted, external).
+    usage: dict[str, Any] | None = None
 
 
 class AgentUnderTest(Protocol):

@@ -3,7 +3,11 @@
 `approve` stores an accepted run as the baseline for its test set. `check` recomputes the
 fingerprint (model id, skill text, tool schemas, agent config and test set, all via their
 hashes), re-runs when it changed and reports only the outcomes that differ from the
-baseline. Exit codes: 0 pass, 1 regression or critical failure, 2 error.
+baseline. Exit codes: 0 pass, 1 regression or critical failure, 2 error. With `go_live`
+the go-live gate (eval.golive) must pass too, or the exit code is 1.
+
+A case passes when its outcome is match, correct_escalation or accepted; baselines written
+before spec v5 said pass, which still counts as a pass.
 """
 
 from __future__ import annotations
@@ -16,17 +20,23 @@ from pydantic import BaseModel, Field
 
 from replaybook.agents.base import AgentUnderTest
 from replaybook.eval.accepted import AcceptedDifferences
+from replaybook.eval.golive import GoLiveGate, go_live_gate
+from replaybook.eval.labels import LabelChecks, label_status, test_set_labels
 from replaybook.eval.runner import (
     RunResult,
     RunSummary,
     compute_fingerprint,
     run_replay,
 )
+from replaybook.eval.scoring import PASSING
 from replaybook.mock_env.registry import describe_all_tools, tool_schema_fingerprint
 from replaybook.schema.testcase import TestSet
+from replaybook.skills import skill_identity
 
 BASELINE_DIR = Path("assurance/baselines")
-GOOD = {"pass", "accepted"}
+# "pass" is what baselines written before spec v5 recorded for a passing case.
+GOOD = set(PASSING) | {"pass"}
+LEGACY = {"pass", "fail"}
 
 
 class Baseline(BaseModel):
@@ -40,6 +50,9 @@ class Baseline(BaseModel):
     tool_fingerprint: str
     summary: RunSummary
     outcomes: dict[str, dict[str, Any]]
+    # The skill version the approved run used (None in baselines written before spec v5).
+    skill: str | None = None
+    skill_version: str | None = None
 
 
 class Change(BaseModel):
@@ -69,6 +82,8 @@ class CheckReport(BaseModel):
     summary_now: RunSummary | None = None
     summary_baseline: RunSummary | None = None
     exit_code: int = 0
+    # Set when the check was asked for the go-live gate (`check --go-live`).
+    go_live: GoLiveGate | None = None
 
     @property
     def has_differences(self) -> bool:
@@ -98,6 +113,8 @@ def approve(run: RunResult, approver: str, baseline_dir: Path = BASELINE_DIR) ->
         test_set_sha256=run.test_set_sha256,
         tool_fingerprint=run.tool_fingerprint,
         summary=run.summary,
+        skill=run.skill,
+        skill_version=run.skill_version,
         outcomes={
             r.case_id: {
                 "outcome": r.outcome,
@@ -135,7 +152,7 @@ def compare(
             continue
         was_good = before["outcome"] in GOOD
         is_good = after.outcome in GOOD
-        detail = after.diffs[0].detail if after.diffs else (after.agent_error or "")
+        detail = after.first_note()
         change = Change(
             case_id=case_id,
             before=before["outcome"],
@@ -151,7 +168,11 @@ def compare(
         elif (
             not was_good
             and not is_good
-            and (before.get("reason") != after.reason or before.get("signature") != after.signature)
+            and (
+                before.get("reason") != after.reason
+                or before.get("signature") != after.signature
+                or (before["outcome"] not in LEGACY and before["outcome"] != after.outcome)
+            )
         ):
             changed.append(change)
     new_cases = sorted(set(now) - set(baseline.outcomes))
@@ -169,10 +190,19 @@ def check(
     workers: int = 4,
     today: date | None = None,
     knowledge: Any = None,
+    go_live: bool = False,
+    label_checks: LabelChecks | None = None,
+    min_pass_rate: float | None = None,
 ) -> tuple[CheckReport, RunResult | None]:
+    """With `go_live`, the go-live gate (minimum pass rate, no unsafe outcome, no agent
+    error, labels spot-checked in `label_checks`, the skill's current version) must pass as
+    well, or the exit code is 1."""
     baseline = load_baseline(test_set.name, baseline_dir)
     tool_fp = tool_schema_fingerprint(describe_all_tools())
-    fingerprint_now = compute_fingerprint(dict(agent.config), test_set.sha256(), tool_fp)
+    skill = skill_identity(test_set.request_type)
+    fingerprint_now = compute_fingerprint(
+        dict(agent.config), test_set.sha256(), tool_fp, skill["skill_version"]
+    )
     checked_at = datetime.now(UTC)
     if baseline is None:
         return (
@@ -190,21 +220,32 @@ def check(
         )
     fingerprint_changed = fingerprint_now != baseline.fingerprint
     if not fingerprint_changed and not force:
-        return (
-            CheckReport(
-                test_set_name=test_set.name,
-                checked_at=checked_at,
-                fingerprint_baseline=baseline.fingerprint,
-                fingerprint_now=fingerprint_now,
-                fingerprint_changed=False,
-                reran=False,
-                message="fingerprint unchanged since the approved baseline; nothing to re-run",
-                summary_baseline=baseline.summary,
-                critical_failures=baseline.summary.critical_failures,
-                exit_code=1 if baseline.summary.critical_failures else 0,
-            ),
-            None,
+        report = CheckReport(
+            test_set_name=test_set.name,
+            checked_at=checked_at,
+            fingerprint_baseline=baseline.fingerprint,
+            fingerprint_now=fingerprint_now,
+            fingerprint_changed=False,
+            reran=False,
+            message="fingerprint unchanged since the approved baseline; nothing to re-run",
+            summary_baseline=baseline.summary,
+            critical_failures=baseline.summary.critical_failures,
+            exit_code=1 if baseline.summary.critical_failures else 0,
         )
+        if go_live:
+            report.go_live = go_live_gate(
+                baseline.summary,
+                label_status(
+                    test_set.name, test_set_labels(test_set), label_checks or LabelChecks()
+                ),
+                min_pass_rate,
+                skill=baseline.skill or skill["skill"],
+                skill_version=baseline.skill_version,
+                current_skill_version=skill["skill_version"],
+            )
+            if not report.go_live.passed and report.exit_code == 0:
+                report.exit_code = 1
+        return report, None
     run = run_replay(
         test_set,
         agent,
@@ -246,6 +287,21 @@ def check(
         summary_baseline=baseline.summary,
         exit_code=exit_code,
     )
+    if go_live:
+        report.go_live = go_live_gate(
+            run.summary,
+            label_status(
+                test_set.name,
+                {r.case_id: r.expected_outcome for r in run.results},
+                label_checks or LabelChecks(),
+            ),
+            min_pass_rate,
+            skill=run.skill,
+            skill_version=run.skill_version,
+            current_skill_version=skill["skill_version"],
+        )
+        if not report.go_live.passed and report.exit_code == 0:
+            report.exit_code = 1
     (Path(out_dir) / "check.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
     return report, run
 

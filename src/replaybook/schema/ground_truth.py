@@ -7,7 +7,7 @@ replay or scoring path can peek at the answers.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -43,3 +43,7 @@ class GroundTruth(BaseModel):
     corrected_by: str | None = None
     is_duplicate_of: str | None = None
     true_effort_hours: float = 0.0
+    # escalate: the ticket needed a person's judgement (an approval chain, a discussion
+    # between engineers, or work beyond the skill's usual pattern), named in `judgement`.
+    expected_outcome: Literal["act", "escalate"] = "act"
+    judgement: str | None = None

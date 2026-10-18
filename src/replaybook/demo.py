@@ -1,12 +1,17 @@
 """`replaybook demo`: the whole story, offline, in one directory.
 
 1. Generate synthetic tickets with hidden ground truth.
-2. Build test sets for three request types from that history.
-3. Replay a reference agent seeded with known flaws and catch them.
+2. Build test sets for three request types from that history, each case labelled act or
+   escalate by the documented rule, and record a spot-check of the labels.
+3. Replay a reference agent seeded with known flaws and catch them, a missed escalation
+   among them.
 4. Group the failures by cause with two side-by-side examples each.
 5. Accept the cases where history itself is outdated (reason, approver, expiry).
-6. Approve the flawed run as the baseline, fix the flaws, and show only what changed.
+6. Approve the flawed run as the baseline, fix the flaws, and show only what changed, with
+   the go-live gate and a correct escalation.
 7. Write the evidence pack: HTML, JSON and a hashed manifest.
+8. Write an approval request for one planned change on a new ticket: the skill version,
+   its replay result, the live verification rate and each write with its check.
 """
 
 from __future__ import annotations
@@ -18,14 +23,16 @@ from pathlib import Path
 from typing import Any
 
 from replaybook.adapters.synthetic import load_platform, load_tickets
-from replaybook.agents.scripted import FLAWS, ScriptedAgent
+from replaybook.agents.scripted import DEMO_FLAWS, ScriptedAgent
+from replaybook.approval import PlannedWrite, build_request, write_request
 from replaybook.discover import discover, write_report
 from replaybook.eval import quality
 from replaybook.eval.accepted import AcceptedDifferences, Kind
 from replaybook.eval.baseline import approve, check, load_baseline
 from replaybook.eval.evidence import EvidenceInputs, RunBundle, build_evidence
 from replaybook.eval.groups import group_failures
-from replaybook.eval.runner import RunResult, run_replay
+from replaybook.eval.labels import LabelChecks, record_check
+from replaybook.eval.runner import RunResult, failure_line, result_line, run_replay
 from replaybook.eval.scoring import REASON_LABELS
 from replaybook.eval.testset import build_test_set
 from replaybook.mock_env.knowledge import Corpus
@@ -34,6 +41,7 @@ from replaybook.schema.testcase import TestSet
 from replaybook.synth.generator import GenerateOptions, generate
 
 DEMO_APPROVER = "demo-approver (automated for the demo; a person signs in real use)"
+DEMO_REVIEWER = "demo-reviewer (automated for the demo; a person spot-checks in real use)"
 
 
 def run_demo(
@@ -70,8 +78,8 @@ def run_demo(
         f"{summary['by_type'].get('noise', 0)} one-off noise tickets, "
         f"{summary['info_missing']} with "
         f"missing information, {summary['history_mistakes']} human mistakes later corrected, "
-        f"two procedure changes). The answers are hidden in a separate file that only the "
-        f"eval module reads."
+        f"{summary['judgement']} that needed a person's judgement, two procedure changes). The "
+        f"answers are hidden in a separate file that only the eval module reads."
     )
 
     # Discovery: which request types cost the most engineer time
@@ -103,21 +111,34 @@ def run_demo(
         sel = ts.selection
         say(
             f"   {request_type}: {sel['selected']} cases, {sel['ask_cases']} expect the agent "
-            f"to ask "
-            f"for missing information, {sel['tagged']['pre-procedure-change']} predate a procedure "
+            f"to ask for missing information, {sel['escalate_cases']} to hand the ticket back "
+            f"(escalate), {sel['tagged']['pre-procedure-change']} predate a procedure "
             f"change, {sel['tagged']['corrected-later']} were corrected by a later ticket"
         )
+    labels_path = out_dir / "assurance" / "labels.yaml"
+    label_checks = LabelChecks()
+    for ts in test_sets.values():
+        record_check(ts, label_checks, DEMO_REVIEWER)
+    label_checks.save(labels_path)
+    say(
+        "   Each case is labelled act or escalate by a documented rule: escalate when the "
+        "engineers' handling needed a person's judgement (an approval or a discussion in the "
+        "comments, or actions beyond the skill's usual pattern). The go-live gate counts the "
+        "labels once a person has spot-checked at least 10 cases or 10% of a set; here an "
+        f"automated stand-in records that check ({labels_path})."
+    )
 
     # 3. Flawed agent
-    flawed = ScriptedAgent(flaws=FLAWS)
+    flawed = ScriptedAgent(flaws=DEMO_FLAWS)
     changes = "; ".join(
         f"{packs.label(c.request_type)}: {c.from_version} -> {c.to_version}"
         for c in packs.procedure_changes()
     )
     say(
-        "\n3. Replayed the reference agent with three seeded flaws (guesses missing information, "
-        f"follows the procedures from before the last change ({changes}), and takes a "
-        "destructive shortcut when a resource already exists):"
+        "\n3. Replayed the reference agent with four seeded flaws (guesses missing information, "
+        f"follows the procedures from before the last change ({changes}), takes a "
+        "destructive shortcut when a resource already exists, and never hands a ticket back "
+        "to a person):"
     )
     flawed_runs: dict[str, RunResult] = {}
     caught: set[str] = set()
@@ -130,10 +151,13 @@ def run_demo(
         say(f"   {request_type}: {_line(run)}")
     labels = [
         REASON_LABELS[r]
-        for r in ("guessed_missing_info", "wrong_tool", "unsafe_action")
+        for r in ("guessed_missing_info", "wrong_tool", "unsafe_action", "missed_escalation")
         if r in caught
     ]
     say(f"   Caught: {', '.join(labels)}. Any critical unsafe action fails the gate on its own.")
+    missed = _first(flawed_runs, "missed_escalation")
+    if missed is not None:
+        say(f"   Missed escalation, e.g. {missed.case_id}: {missed.first_note()}")
 
     # 4. Groups
     say("\n4. Grouped the failures by cause (two examples each are in the evidence pack):")
@@ -186,6 +210,7 @@ def run_demo(
     bundles: list[RunBundle] = []
     quality_report: dict[str, Any] = {}
     exit_codes: list[int] = []
+    fixed_runs: dict[str, RunResult] = {}
     for request_type, ts in test_sets.items():
         approve(flawed_runs[request_type], DEMO_APPROVER, baseline_dir)
         check_dir = out_dir / "runs" / f"v2-{request_type}"
@@ -198,14 +223,18 @@ def run_demo(
             workers=workers,
             today=today,
             knowledge=corpus,
+            go_live=True,
+            label_checks=label_checks,
         )
-        assert run is not None
+        assert run is not None and report.go_live is not None
+        fixed_runs[request_type] = run
         exit_codes.append(report.exit_code)
         say(
             f"   {request_type}: {len(report.improvements)} improved, "
             f"{len(report.regressions)} regressed, "
             f"{len(report.changed)} changed reason; now {_line(run)}; exit code {report.exit_code}"
         )
+        say(f"      {report.go_live.line()}")
         bundles.append(
             RunBundle(
                 run=run,
@@ -224,10 +253,17 @@ def run_demo(
         quality_report[f"{request_type}: false passes (v1 and v2)"] = len(
             quality.false_passes(flawed_runs[request_type], data_dir)
         ) + len(quality.false_passes(run, data_dir))
+        quality_report[f"{request_type}: escalation labels that disagree with the hidden truth"] = (
+            f"{len(quality.label_disagreements(ts, data_dir))} of {len(ts.cases)}"
+        )
         groups = group_failures(flawed_runs[request_type].results)
         if groups:
             purity = quality.group_purity(groups, flawed_runs[request_type], data_dir)
             quality_report[f"{request_type}: v1 group purity vs seeded flaws"] = f"{purity:.2f}"
+
+    correct = _first(fixed_runs, "correct_escalation")
+    if correct is not None:
+        say(f"   Correct escalation, e.g. {correct.case_id}: {correct.first_note()}")
 
     # 7. Evidence
     evidence_dir = out_dir / "evidence"
@@ -244,24 +280,59 @@ def run_demo(
             agent_description=(
                 "Agent under test: Replaybook's deterministic scripted reference agent with all "
                 "flaws switched off (v2), compared with the approved baseline run of the same "
-                "agent "
-                "with three seeded flaws (v1)."
+                "agent with four seeded flaws (v1), one of which never hands a ticket back."
             ),
             today=today,
+            label_checks=label_checks,
+            labels_path=labels_path,
         ),
         evidence_dir,
     )
-    elapsed = time.perf_counter() - started
     say(
         f"\n7. Wrote the evidence pack: {paths['html']} "
         "(plus evidence.json and a SHA-256 manifest)."
     )
+
+    # 8. An approval request for the writes the fixed agent would make on a new ticket.
+    request_paths: dict[str, str] = {}
+    sample = next(
+        (
+            (request_type, r)
+            for request_type, run in fixed_runs.items()
+            for r in run.results
+            if r.planned_checks and all(p["check"] for p in r.planned_checks)
+        ),
+        None,
+    )
+    if sample is not None:
+        request_type, result = sample
+        request = build_request(
+            request_type,
+            [PlannedWrite.model_validate(p["write"]) for p in result.planned_checks],
+            ticket="NEW-1",
+            runs_dir=out_dir / "runs",
+            evidence_dir=evidence_dir,
+            live_dir=out_dir / "live",
+            label_checks=label_checks,
+        )
+        written = write_request(request, out_dir / "approval")
+        request_paths = {k: str(v) for k, v in written.items()}
+        state = "BLOCKED" if request["blocked"] else "ready for a person's decision"
+        say(
+            f"\n8. Wrote an approval request for the {len(request['plan'])} write(s) "
+            f"{request['skill']} would make on a new ticket ({state}): version "
+            f"{request['skill_version_short']}, {request['replay']['result_line']}, live "
+            f"verification: {request['live_line']}, each write with the check that confirms "
+            f"it ({written['markdown']})."
+        )
+    elapsed = time.perf_counter() - started
     say(f"\nDone in {elapsed:.1f}s. Open {paths['html']} in a browser.")
     return {
         "elapsed_s": elapsed,
         "exit_codes": exit_codes,
         "quality": quality_report,
         "evidence": {k: str(v) for k, v in paths.items()},
+        "approval_request": request_paths,
         "accepted": len(store.accepted),
         "caught": sorted(caught),
     }
@@ -270,10 +341,19 @@ def run_demo(
 def _line(run: RunResult) -> str:
     s = run.summary
     return (
-        f"{s.passed} pass, {s.accepted} accepted, {s.failed} fail, {s.errors} error of {s.total} "
-        f"(pass rate {s.pass_rate:.0%}, 95% CI {s.wilson_low:.0%}-{s.wilson_high:.0%}), "
-        f"critical {s.critical_failures}, gate {s.gate.upper()}"
+        f"{result_line(s)}, {failure_line(s)} (pass rate {s.pass_rate:.0%}, 95% CI "
+        f"{s.wilson_low:.0%}-{s.wilson_high:.0%}), critical {s.critical_failures}, "
+        f"critical gate {s.gate.upper()}"
     )
+
+
+def _first(runs: dict[str, RunResult], outcome: str) -> Any:
+    """The first case with this outcome across the runs, for the story; None if none."""
+    for run in runs.values():
+        for result in run.results:
+            if result.outcome == outcome:
+                return result
+    return None
 
 
 def _change_reason(platform: dict[str, Any], request_type: str) -> str:

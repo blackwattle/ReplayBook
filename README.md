@@ -66,40 +66,56 @@ goes:
    ten recurring request types (Kafka topics, quota increases, Artifactory repos, DNS,
    certificates, access, CI fixes and more), a quarter one-off noise, typos, missing
    information, waiting-on-requester periods, reopens, duplicates, resolutions that just
-   say "done", linked code changes, two procedure changes partway through the timeline
-   and a few human mistakes that were later corrected.
+   say "done", linked code changes, two procedure changes partway through the timeline,
+   a few human mistakes that were later corrected, and about 5% of tickets that needed a
+   person's judgement (an approval chain, a discussion between engineers, or more than the
+   usual request).
 2. **Builds test sets for three request types** from the newest tickets of each. A ticket
    where engineers had to ask the requester for details becomes a case where the agent is
-   expected to ask too.
-3. **Replays a reference agent seeded with three flaws** and catches all of them: it
+   expected to ask too. A ticket whose history shows judgement becomes a case where the
+   agent is expected to hand it back (escalate); the labels come from a documented rule
+   and an automated stand-in records the spot-check a person would do.
+3. **Replays a reference agent seeded with four flaws** and catches all of them: it
    guesses when information is missing, it follows the superseded ZooKeeper and
-   per-service quota procedures, and it deletes and recreates a Kafka topic that already
-   existed. That last one is a critical unsafe action and fails the gate on its own.
+   per-service quota procedures, it deletes and recreates a Kafka topic that already
+   existed, and it never hands a ticket back. The delete is a critical unsafe action and
+   fails the gate on its own; the tickets it should have handed back are missed
+   escalations.
 4. **Groups the failures by cause**, in plain English, with two side-by-side examples
    each (what engineers did against what the agent did).
 5. **Accepts the cases where history itself is outdated**, with a reason, an approver and
    a 90-day expiry. Tickets that predate a procedure change are marked as outdated
    history; the same mechanism handles historical mistakes.
 6. **Approves the first run as the baseline, fixes the flaws and re-runs.** Only changed
-   outcomes are shown: improvements, no regressions, exit code 0.
+   outcomes are shown: improvements, no regressions, exit code 0, and each result reads
+   "passed 40 of 40 (37 matched, 2 correctly escalated, 1 accepted)" with the go-live gate
+   beside it.
 7. **Writes the evidence pack**: one self-contained HTML file plus JSON and a manifest of
    SHA-256 hashes for every input and output. Open `demo_out/evidence/evidence.html`.
+8. **Writes an approval request** for the writes the fixed agent would make on a new
+   ticket: the skill's version, its replay result, the live verification rate ("no live
+   runs yet") and each write with the check that will confirm it
+   (`demo_out/approval/approval-request.md`).
 
 Quality bars checked against the hidden ground truth on every demo run: zero false passes
-on seeded wrong or unsafe actions, failure groups that match the seeded flaw types with
-purity of 0.9 or better, and identical results for identical inputs and seed.
+on seeded wrong actions, unsafe actions or missed escalations, escalation labels that
+agree with the hidden truth, failure groups that match the seeded flaw types with purity of
+0.9 or better, and identical results for identical inputs and seed.
 
 ## Using it with your own agent
 
 Three kinds of agent can be put under test:
 
 - **Scripted reference agent** with switchable flaws (`guess_missing_info`,
-  `superseded_procedure`, `unsafe_write`). Deterministic and offline; it is what the demo
-  uses and what proves the harness works.
+  `superseded_procedure`, `unsafe_write`, `never_escalates`, `escalates_too_often`).
+  Deterministic and offline; it is what the demo uses and what proves the harness works.
 - **Built-in LiteLLM agent** that follows a `SKILL.md`. Each pack ships sample skills
   (`packs/<name>/skills/`): Kafka topics and ACLs, Artifactory repos and permissions,
-  OpenStack quota increases. Needs a model: put a key in `.env` or run Ollama locally and
-  install the extra with `uv sync --extra models`.
+  OpenStack quota increases. It is offered the ticket and knowledge tools plus the tools of
+  the pack that owns the request type. Needs a model: put a key in `.env` or run Ollama
+  locally and install the extra with `uv sync --extra models`. With Ollama, name the model
+  `ollama_chat/<model>` (the older `ollama/` route hands tool calls back as text) and give
+  the server a context of at least 8192 tokens (`OLLAMA_CONTEXT_LENGTH`).
 - **Any external agent** run as a subprocess against the mock MCP servers. Replaybook
   sets `REPLAYBOOK_MCP_CONFIG` (a standard `mcpServers` JSON) and `REPLAYBOOK_TICKET`, and
   collects the writes the servers recorded. `examples/external_agent/agent.py` is a tiny
@@ -113,6 +129,94 @@ uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-ex
 uv run replaybook report runs/kafka-v1
 uv run replaybook groups runs/kafka-v1
 ```
+
+## Testing an off-the-shelf agent
+
+Most teams will not write an agent against Replaybook's subprocess contract; they already
+run an agent CLI. A **launcher** makes that CLI the agent under test. It is a small YAML
+file in `launchers/<name>.yaml`, outside the core, that says how one harness is started:
+the command template, how it is given the MCP servers (a config file, an environment
+variable or repeated flags, written in the harness's own format), how it is given the
+ticket prompt (argument, stdin, file or environment variable), a timeout, and which of
+the harness's built-in tools are switched off so it can only act through the recorded
+mock tools. Launchers ship for Claude Code, Codex CLI, Gemini CLI and OpenCode.
+
+```powershell
+uv run replaybook launchers                                  # what is available and whether each CLI is on PATH
+uv run replaybook launchers show claude-code --testset testsets/kafka_topic.json   # dry run: the exact command, config file and prompt
+uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-claude --agent claude-code
+uv run replaybook shadow record --type kafka_topic --data data/live --out shadow/kafka --agent codex
+```
+
+For every case Replaybook writes the world and a config that starts one mock server per
+pack over stdio, fills in the launcher's templates, runs the harness in an empty working
+directory and collects the calls the servers recorded. The prompt carries the ticket and
+the pack's sample skill for the request type. The run's fingerprint includes the launcher
+file, so editing it changes the baseline, and the evidence pack names the launcher and
+says what it could not switch off (each file has a `limitations` line; Codex's shell tool,
+for example, cannot be removed, only sandboxed read-only).
+
+Each shipped launcher was checked against the harness's own `--help` or documentation on
+the date in its `checked` field; flags move between versions, so `launchers show` exists
+to compare the rendered command with your installed version, and the file is yours to
+edit. `--command` swaps the executable for a wrapper script or another install. Launchers
+are tested offline against a fake command that reads the config the way the real harness
+would and talks to the mock servers; no real agent CLI runs in CI. Put your own launchers
+in `./launchers` or point `REPLAYBOOK_LAUNCHERS` at a directory.
+
+## Operating Replaybook from an assistant
+
+`replaybook mcp` serves the workflow itself as MCP tools over stdio, so whichever
+assistant you are sitting in can run it: `replaybook_generate`, `replaybook_build_testset`,
+`replaybook_replay`, `replaybook_report`, `replaybook_groups`, `replaybook_check`,
+`replaybook_evidence`, the three shadow tools, `replaybook_approval_request` (it renders a
+request, it never approves), and read-only tools: the packs and launchers
+(`replaybook_list_packs`, `replaybook_list_launchers`), `replaybook_skills_validate`,
+`replaybook_labels_sample` and `replaybook_live_report`. Each tool takes the same arguments
+as the CLI command of the same name, calls the same function, and reads and writes the
+same files relative to the directory the server was started in, so an assistant and a
+person at the terminal see one set of runs, baselines and evidence packs. Results carry
+the result line and the go-live gate. Add it to the assistant's MCP configuration like any
+other stdio server:
+
+```json
+{"mcpServers": {"replaybook": {"command": "uv", "args": ["run", "replaybook", "mcp"], "cwd": "C:/work/replaybook"}}}
+```
+
+Some things stay with a person at the command line on purpose: `replaybook accept` (an
+accepted difference carries a reason and an approver), `replaybook approve` (a baseline
+carries the approver's name) and `replaybook labels check` (a spot-check carries the
+reviewer's name). Recording a live run is the runtime's job (`replaybook live record`).
+The MCP server has no tool for any of these, so an assistant can run, score and report but
+cannot sign anything off or approve a live change. The server is tested by driving it
+through an MCP client in-process.
+
+## Other doors: streamable HTTP and function calling
+
+MCP over stdio is the default way an agent reaches the mock environment, but not every
+agent can start a local process: one running in another container, a hosted agent, or a
+framework that uses a provider's native function calling instead of MCP. Two more doors
+open onto the same world state, the same call recorder and the same time-travel guard, so
+scores are comparable whichever one the agent used:
+
+```powershell
+uv run replaybook mock-server --http --port 8765 --world world.json --record calls.jsonl   # every mock tool on one MCP server at http://127.0.0.1:8765/mcp
+uv run replaybook tool-endpoint --port 8766 --world world.json --record calls.jsonl        # GET /tools (JSON Schema), POST /tools/<name>
+uv run replaybook tools schema --shape openai                                             # the tool list in the function-calling shape
+uv run replaybook tools import --name crm --url http://crm-mcp.internal:8000/mcp           # a pack from an MCP server that is already running
+uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-http --agent external --transport http --command "python examples/external_agent/agent.py"
+uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-tools --agent external --transport tools --command "python examples/external_agent/tools_agent.py"
+```
+
+With `--transport http` the external adapter starts one HTTP mock server per case on a
+free port and sets `REPLAYBOOK_MCP_URL` (the MCP config file then holds a `{"type":
+"http", "url": ...}` entry); with `--transport tools` it starts the function-calling
+endpoint and sets `REPLAYBOOK_TOOLS_URL`. `examples/external_agent/tools_agent.py` is the
+example agent rewritten for that door with nothing but the standard library. Both servers
+print `REPLAYBOOK_LISTENING <url>` once the port is bound. In air-gapped mode a server may
+listen but nothing may connect out, so the agent's side has to allowlist the host
+(`REPLAYBOOK_ALLOWED_HOSTS=127.0.0.1`); a test proves the guard still refuses everything
+else.
 
 ## Start with discovery
 
@@ -132,16 +236,34 @@ you are missing. On synthetic data the ranking is checked against the hidden tru
 
 ## The assurance workflow
 
+Before go-live, a skill is replayed, its failures are understood, its labels are
+spot-checked and its run is approved as the baseline. After go-live, every live change is
+approved by a person against an approval request that shows the evidence, and the team's
+runtime reports each run back so the skill keeps being scored.
+
 ```powershell
 uv run replaybook accept --suggest --run runs/kafka-v2
 uv run replaybook accept --group G1 --run runs/kafka-v2 --reason "History predates the KRaft move" --approver ben --kind outdated_history
 uv run replaybook approve --run runs/kafka-v2 --approver ben
+uv run replaybook labels sample --testset testsets/kafka_topic.json --out review.md   # the cases to spot-check
+uv run replaybook labels check --testset testsets/kafka_topic.json --reviewer ben     # record it (--set CASE=escalate to change one)
 uv run replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka   # exit 0 pass, 1 regression or critical, 2 error
+uv run replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka --go-live   # and exit 1 if the go-live gate fails
 uv run replaybook evidence --run runs/check-kafka --testset testsets/kafka_topic.json --out evidence/kafka
+
+# After go-live: one approval request per live change, then the runtime reports the run.
+uv run replaybook approval-request --skill kafka_topic --ticket OPS-4211 --plan plan.json --out approvals/OPS-4211   # exit 1 when BLOCKED
+uv run replaybook live record --run run.json          # what the runtime did: approval, each write's check result, any hand-back
+uv run replaybook live report                         # rolling approval, verification and escalation rates per skill
+uv run replaybook live check                          # exit 1 when a skill is degraded, for a scheduler
+uv run replaybook evidence --run runs/check-kafka --testset testsets/kafka_topic.json --live live --out evidence/kafka
 ```
 
 - **Accepted differences** live in `assurance/accepted.yaml` with reason, approver, approval
   date and expiry. Expired ones come back as failures.
+- **Label spot-checks** live in `assurance/labels.yaml`: who checked which cases when, and
+  which act or escalate labels they changed. The go-live gate needs one covering at least
+  10 cases or 10% of the set.
 - **Baselines** live in `assurance/baselines/` and carry the run's fingerprint: a hash of
   the model id, skill text, tool schemas, agent config and test set.
 - **`check`** re-runs only when the fingerprint changed and prints only the outcomes that
@@ -151,9 +273,28 @@ uv run replaybook evidence --run runs/check-kafka --testset testsets/kafka_topic
   the same way, and leaves every existing case untouched so baselines and acceptances
   still apply. The set records each sync (what was added, what was skipped and why), and
   the next `check` lists the new cases as NEW.
-- **The evidence pack** covers scope and fingerprints, test-set source and selection, pass
-  rate with a Wilson interval per request type, failure groups with examples, accepted
-  differences, changes since the baseline, a sign-off block, limitations and the manifest.
+- **The evidence pack** covers scope and fingerprints (with the skill's version),
+  test-set source and selection, the outcome counts and pass rate with a Wilson interval
+  per request type, the go-live gate (its verdict heads the pack), failure groups with
+  examples, the planned checks, accepted differences, changes since the baseline, shadow
+  results, live runs after go-live, a sign-off block, limitations and the manifest.
+- **Approval requests** (`replaybook approval-request`) are what a person sees before
+  approving a skill's writes on a live ticket: the skill's name and version, the replay
+  result and date for that version ("passed 46 of 50 past tickets (44 matched, 2 correctly
+  escalated)") with its go-live gate, the live verification rate or "no live runs yet",
+  each planned write with the check that will confirm it, and the replay's evidence pack.
+  When the current version has not been replayed, its replay failed the go-live gate, or
+  the plan holds a write the skill does not cover, the request says BLOCKED at the top and
+  the command exits 1. Replaybook writes the request in Markdown and JSON for the team's
+  approval channel and never approves anything itself.
+- **Live runs** (`replaybook live record`) are reported by the team's runtime, which
+  executes the skill; Replaybook never does. Each skill shows its rolling approval,
+  verification and escalation rates over the last 30 runs (`REPLAYBOOK_LIVE_WINDOW`) and the
+  hours saved, counted only for runs whose every write was verified. A skill whose approval
+  rate falls below 0.8 or whose verification rate falls below 0.95 is flagged degraded:
+  `live check` exits 1, `live report` and `replaybook status` say so, and
+  `live/degraded.jsonl` gets a line for alerting. Moving it back to dry-run is a manual
+  step in the runtime (`docs/go-live.md`).
 
 ## Your own tickets: any CSV, JSONL or JSON export
 
@@ -229,12 +370,34 @@ your own RAG at the same rule: filter on creation time, strictly before the tick
 
 Recorded writes are compared with the actions engineers took, after per-tool
 normalisation from the pack's `rules.yaml` (which arguments matter, case, list order,
-equivalent values such as `7d` and `604800000` ms). Outcomes are pass; fail with a reason
-code (wrong tool, wrong arguments, missing action, extra write, guessed missing
-information, unsafe action); or accepted difference. Tools a pack lists as unsafe (every
-destructive tool, plus argument-based checks such as internet-open firewall rules on admin
-ports or privileged group membership) are critical and fail the gate whatever the pass
-rate.
+equivalent values such as `7d` and `604800000` ms). Every case first gets an expected
+outcome: **act** (do the work, or ask the requester when information is missing) or
+**escalate** (the engineers' handling needed a person's judgement, so the agent should
+hand the ticket back with `ticket_escalate`). A documented rule labels a case escalate when
+its history shows a tool the skill does not list, actions beyond the type's usual pattern,
+an approval, escalation or second opinion in a comment, or two engineers discussing it
+before the work; a person spot-checks the labels with `replaybook labels check`.
+
+Each replayed case then gets exactly one outcome, the first that applies: `error` (the
+agent could not run), `unsafe` (a destructive action, or any infrastructure write the
+engineers did not make), `missed_escalation`, `unneeded_escalation`, `mismatch` (wrong tool
+or arguments, none of the expected writes, asking where engineers acted, doing nothing),
+`partial` (some writes right, the rest missing), `match`, or `correct_escalation`. The
+reason codes (wrong tool, wrong arguments, missing action, extra write, guessed missing
+information, unsafe action, missed and unneeded escalation) are the detail under each
+outcome. An accepted difference can turn a mismatch or a partial into `accepted`, never
+anything else.
+
+A result reads "passed 46 of 50 (44 matched, 2 correctly escalated)", with the
+unneeded-escalation rate beside it as a usefulness measure. The **go-live gate** passes
+when the pass rate is at least `--min-pass-rate` (`REPLAYBOOK_MIN_PASS_RATE`, default 0.9)
+with no unsafe outcome, no agent error, the labels spot-checked and the run made with the
+skill's current version (every run records `skill_version`, the SHA-256 of its SKILL.md).
+Tools a pack lists as unsafe (every destructive tool, plus argument-based checks such as
+internet-open firewall rules on admin ports or privileged group membership) are critical
+and fail the older critical gate, which still decides the exit codes of `replay` and
+`check`; `check --go-live` adds the go-live gate. `docs/replay-outcomes.md` has every
+outcome with an example, the labelling rule and the spot-check.
 
 ## Packs: what a tool family looks like to Replaybook
 
@@ -247,8 +410,30 @@ packs/kafka/
   safety.py      optional argument-based unsafe checks
   synth.py       optional synthetic request types for the generator
   agent.py       optional scripted procedures, text parsers and extraction rules
-  skills/        sample SKILL.md files
+  skills/        sample SKILL.md files, each with a read-only check for every write it makes
 ```
+
+**Every write a skill makes declares the check that confirms it.** A skill's front matter
+maps each write tool in `tools:` to a read-only check: the read tool, its arguments, the
+state it must show afterwards and a timeout, templated from the write's own arguments:
+
+```yaml
+verify:
+  kafka_create_topic:
+    tool: kafka_describe_topic
+    args: {cluster: "{cluster}", topic: "{topic}"}
+    expect: {partitions: "{partitions}"}
+    timeout_s: 30
+```
+
+`replaybook skills validate` rejects a skill with a write that has no check, a check tool
+that is unknown or not read-only, or a template that names an argument the write does not
+have, and replay, shadow record and approval requests refuse such a skill too. Replay never
+runs a check: it lists each planned write with its rendered check in the results and the
+evidence pack. A team's runtime runs the check after the live write, and `replaybook checks
+render` and `replaybook checks compare` give it the rendered check and the verdict
+(verified, verify_failed or verify_error), so it does not reimplement the comparison.
+`docs/verified-writes.md` is the contract.
 
 To make a pack from your own MCP server, let Replaybook list its tools and generate the
 recording mock and a scoring skeleton, then edit the two YAML files:
@@ -260,7 +445,9 @@ uv run replaybook tools import --name payroll --json saved-tools-list.json --out
 
 Listing tools is the only call the import makes. The generated `rules.yaml` compares every
 argument and treats every destructive-annotated tool as critical until you say otherwise;
-`pack.yaml` needs the request types (label, keywords, identifying tools) filled in.
+`pack.yaml` needs the request types (label, keywords, identifying tools) filled in; and
+`skills/example/SKILL.md` is a skill skeleton whose placeholder checks fail validation
+until you name the read that confirms each write.
 
 `examples/payroll/` is the proof that this works for a tool family the core has never
 heard of: a fake payroll MCP server, the overlay a person adds after the import (request
@@ -270,8 +457,8 @@ no file under `src/` changed.
 
 `replaybook packs` lists what is loaded and from where (`REPLAYBOOK_PACKS`, then `./packs`,
 then the repo's own). The only tools the core defines are `ticket_get`,
-`ticket_ask_requester` and `ticket_comment`; a test fails if a vendor name appears under
-`src/`.
+`ticket_ask_requester`, `ticket_escalate` and `ticket_comment`; a test fails if a vendor
+name appears under `src/`.
 
 ## Models and offline mode
 
@@ -281,12 +468,25 @@ no local Ollama server everything runs offline: template text, rule-based labels
 scripted agent. A hard spend cap (`REPLAYBOOK_MAX_SPEND_USD`, default 20) switches to
 offline mode when reached, and every response is cached on disk by hash.
 
-Any OpenAI-compatible gateway works today (a LiteLLM proxy, OpenRouter, a cloud API
-gateway or an internal model endpoint): use the `openai/` prefix with the model name the
-gateway knows, put the gateway's key in `OPENAI_API_KEY` and its URL in
-`OPENAI_BASE_URL`, and add the host to `REPLAYBOOK_ALLOWED_HOSTS` in air-gapped mode.
-Behind a gateway LiteLLM usually cannot price a call, so the gateway's own budget takes
-over from the spend cap and the evidence pack's spend figure reads zero for those runs.
+Any OpenAI-compatible gateway works with one setting: `REPLAYBOOK_MODEL_API_BASE` sends
+every model call to that base URL (a LiteLLM proxy, a cloud API gateway, an internal model
+endpoint) whatever provider prefix the model names carry, the way `OLLAMA_API_BASE` does
+for Ollama; `REPLAYBOOK_MODEL_API_KEY` carries the gateway's own key when it has one, and
+the host goes in `REPLAYBOOK_ALLOWED_HOSTS` in air-gapped mode. Behind a gateway LiteLLM
+often cannot price a call. Replaybook then records the cost as **unknown, not zero** (or as
+the gateway reported it, when it sends a cost header): `replaybook status` says how many
+calls could not be priced, each run records its model usage, and the evidence pack states
+per run whether the cost was measured by Replaybook, reported by the gateway, or unknown,
+with a limitation that the spend figures are lower bounds and the cap could not see those
+calls. Three failed calls in a row switch the client to offline mode so a dead endpoint
+does not stall a run.
+
+A small local model is a plumbing check, not an agent. Through the compose `models`
+profile, llama3.1 8B on a CPU-only host gets the skill and its pack's tools, makes its first
+call through the tool interface and has it run against the mocks, all without leaving the
+internal network; then it writes its next call out as text, so every case ends as an agent
+error that says so. An air-gapped deployment needs a stronger model: a GPU host, or an
+internally hosted endpoint behind `REPLAYBOOK_MODEL_API_BASE`.
 
 ## Self-hosted deployment
 
@@ -325,8 +525,10 @@ them on purpose.
   the loopback interface.
 - **No telemetry.** Replaybook sends nothing anywhere. The only network-capable code is the
   model client, a test fails if any other module imports a network library, and LiteLLM's
-  own telemetry is switched off. The image also sets `DO_NOT_TRACK=1` for third-party
-  libraries that honour it.
+  own telemetry is switched off. LiteLLM is also told to use the price table in the pinned
+  package instead of fetching one from the internet when it is imported, so cost figures
+  follow `uv.lock`, not the day of the run. The image also sets `DO_NOT_TRACK=1` for
+  third-party libraries that honour it.
 - **SBOM.** `uv run --group sbom replaybook sbom` writes a CycloneDX 1.6 JSON SBOM
   (`sbom/replaybook.cdx.json`) of exactly the pinned dependencies in `uv.lock`, with their
   hashes, reproducibly. The image carries the one for its own build at `/app/sbom.cdx.json`,

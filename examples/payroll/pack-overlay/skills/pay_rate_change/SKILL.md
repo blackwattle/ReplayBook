@@ -2,7 +2,13 @@
 name: pay-rate-change
 description: Change an employee's hourly pay rate as approved in the ticket.
 request_type: pay_rate_change
-tools: payroll_get_employee, payroll_set_pay_rate, ticket_ask_requester, ticket_comment
+tools: payroll_get_employee, payroll_set_pay_rate, ticket_ask_requester, ticket_escalate, ticket_comment
+verify:
+  payroll_set_pay_rate:
+    tool: payroll_get_employee
+    args: {employee_id: "{employee_id}"}
+    expect: {employee_id: "{employee_id}", hourly_rate: "{hourly_rate}"}
+    timeout_s: 30
 ---
 
 # Pay rate change
@@ -18,6 +24,13 @@ A manager or HR asks for an employee's hourly rate to change, with the employee 
 
 If the employee id or the new rate is missing, ask the requester with
 `ticket_ask_requester` and stop. Never estimate a rate.
+
+## When to hand back
+Call `ticket_escalate` with a one-line reason and stop, without changing anything, when
+the ticket needs a decision a person should make:
+- it says the change still needs an approval (an approval already given, such as "approved
+  by their manager", is not a reason to hand back);
+- it asks for more than a rate change, such as an allowance or a termination.
 
 ## Procedure
 1. `payroll_get_employee` to confirm the employee exists and see the current rate.

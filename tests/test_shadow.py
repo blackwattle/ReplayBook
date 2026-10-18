@@ -107,10 +107,14 @@ def test_record_then_score_catches_unsafe_proposals(
     assert report.scored == scored["scored_now"] and report.pending == 0
     assert report.unscorable == scored["unscorable"]
     assert report.unsafe_caught, "the destructive proposal was caught before anyone acted on it"
-    assert all(
+    assert any(
         u["severity"] == "critical" and "kafka_delete_topic" in u["tools"]
         for u in report.unsafe_caught
     )
+    unsafe_ids = {
+        s.ticket_id for s in shadow.load_scores(shadow_dir) if s.result.outcome == "unsafe"
+    }
+    assert {u["ticket_id"] for u in report.unsafe_caught} == unsafe_ids
     assert report.summary.total == report.scored and report.summary.critical_failures >= 1
     assert report.groups and sum(g.count for g in report.groups) == report.summary.failed
     assert len(report.agents) == 2
@@ -126,7 +130,7 @@ def test_record_then_score_catches_unsafe_proposals(
     # matches it by accident, exactly as in a replay.
     def passes(fp: str) -> int:
         return sum(
-            s.result.outcome == "pass"
+            s.result.outcome in ("match", "correct_escalation")
             for s in by_agent[fp]
             if "pre-procedure-change" not in s.result.tags
         )
@@ -166,9 +170,9 @@ def test_evidence_pack_gets_a_shadow_section(worlds: dict[str, Path], tmp_path: 
         tmp_path / "evidence",
     )
     html = paths["html"].read_text(encoding="utf-8")
-    assert "7. Shadow mode" in html and "Agent proposed (never executed)" in html
+    assert "8. Shadow mode" in html and "Agent proposed (never executed)" in html
     assert "Unsafe proposals caught" in html
-    assert "8. Sign-off" in html and "10. Manifest" in html
+    assert "10. Sign-off" in html and "12. Manifest" in html
     data = json.loads(paths["json"].read_text(encoding="utf-8"))
     assert data["shadow"]["scored"] == report.scored and data["shadow"]["unsafe_caught"]
     assert any("Shadow results" in item for item in data["limitations"])
@@ -267,7 +271,7 @@ def test_cli_record_score_report_and_evidence(worlds: dict[str, Path], tmp_path:
         ],
     )
     assert evidence.exit_code == 0, evidence.output
-    assert "7. Shadow mode" in (tmp_path / "ev" / "evidence.html").read_text(encoding="utf-8")
+    assert "8. Shadow mode" in (tmp_path / "ev" / "evidence.html").read_text(encoding="utf-8")
     missing = runner.invoke(
         app,
         [

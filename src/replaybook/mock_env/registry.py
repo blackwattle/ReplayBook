@@ -17,15 +17,24 @@ from typing import Any
 from replaybook.mock_env import knowledge, ticket
 from replaybook.mock_env.base import MockServer
 from replaybook.mock_env.recorder import CallKind, CallRecorder
-from replaybook.mock_env.ticket import ASK_TOOL, COMMENT_TOOL, GET_TOOL, NOTE_TOOLS
+from replaybook.mock_env.ticket import (
+    ASK_TOOL,
+    COMMENT_TOOL,
+    ESCALATE_TOOL,
+    GET_TOOL,
+    NOTE_TOOLS,
+    TICKET_WRITE_TOOLS,
+)
 from replaybook.mock_env.world import WorldState
 from replaybook.packs import PackRegistry, registry
 
 __all__ = [
     "ASK_TOOL",
     "COMMENT_TOOL",
+    "ESCALATE_TOOL",
     "GET_TOOL",
     "NOTE_TOOLS",
+    "TICKET_WRITE_TOOLS",
     "MockEnvironment",
     "describe_all_tools",
     "server_names",

@@ -5,6 +5,7 @@ it. All of this runs on the loopback interface; no packet leaves the machine."""
 from __future__ import annotations
 
 import ast
+import os
 import select
 import socket
 import sys
@@ -36,16 +37,25 @@ NETWORK_MODULES = {
     "smtplib",
     "ftplib",
     "xmlrpc",
+    "uvicorn",
+    "starlette",
+    "mcp.client.client",
+    "mcp.client.streamable_http",
 }
 # The model client probes Ollama and calls LiteLLM; the guard patches the socket module;
-# the Jira Cloud adapter is an explicit export to a site the user configures (and the
-# guard still governs it).
+# the Jira Cloud, Postgres and ServiceNow adapters are explicit exports from a system the
+# user configures; the two HTTP doors (mock servers over streamable HTTP, the function-
+# calling endpoint) listen on a local port and never connect out; `tools import --url`
+# connects to the one MCP server the user names. Air-gapped mode governs all of them.
 MAY_USE_THE_NETWORK = {
     SRC / "llm" / "client.py",
     SRC / "netguard.py",
     SRC / "adapters" / "jira_cloud.py",
     SRC / "adapters" / "postgres.py",
     SRC / "adapters" / "servicenow.py",
+    SRC / "mock_env" / "serve.py",
+    SRC / "mock_env" / "http_tools.py",
+    SRC / "tools_import.py",
 }
 
 
@@ -124,6 +134,43 @@ def test_allowlisted_name_resolves_and_its_addresses_connect(
     # The same name on another port is still refused.
     with pytest.raises(netguard.AirgapViolation):
         socket.getaddrinfo("localhost", port + 1 if port < 65535 else port - 1)
+
+
+def test_listening_is_allowed_but_connecting_back_is_not(guard: None) -> None:
+    """A mock server can bind a local port under the guard (the passive lookup that precedes a
+    bind is not a connection); reaching that port still needs the allowlist."""
+    netguard.install()
+    passive = socket.getaddrinfo("127.0.0.1", 0, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
+    assert passive
+    with pytest.raises(netguard.AirgapViolation):
+        socket.getaddrinfo("127.0.0.1", 0, type=socket.SOCK_STREAM)
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    try:
+        with pytest.raises(netguard.AirgapViolation):
+            socket.create_connection(("127.0.0.1", port), timeout=1)
+        netguard.install(f"127.0.0.1:{port}")
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            assert _got_connection(server)
+    finally:
+        server.close()
+
+
+def test_socket_pairs_and_event_loops_still_work(guard: None) -> None:
+    """On Windows asyncio wakes its loop through a loopback socket pair; the guard must not
+    break every event loop in the process."""
+    import asyncio
+
+    netguard.install()
+    a, b = socket.socketpair()
+    a.sendall(b"ping")
+    assert b.recv(4) == b"ping"
+    a.close()
+    b.close()
+    assert asyncio.run(asyncio.sleep(0, result="loop ran")) == "loop ran"
+    assert netguard.status()["refused_connections"] == 0
 
 
 def test_unix_sockets_are_not_outbound(guard: None, tmp_path: Path) -> None:
@@ -249,6 +296,7 @@ def test_litellm_telemetry_is_switched_off(tmp_path: Path, monkeypatch: pytest.M
     fake.completion_cost = lambda completion_response: 0.0  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "litellm", fake)
     monkeypatch.delenv("LITELLM_TELEMETRY", raising=False)
+    monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP", raising=False)
 
     client = LLMClient(
         LLMConfig(model_fast="openai/gpt-4.1-mini", cache_dir=tmp_path), check_providers=False
@@ -256,3 +304,6 @@ def test_litellm_telemetry_is_switched_off(tmp_path: Path, monkeypatch: pytest.M
     response = client.complete([{"role": "user", "content": "hi"}])
     assert response.text == "hello" and fake.calls  # type: ignore[attr-defined]
     assert fake.telemetry is False  # type: ignore[attr-defined]
+    # The price table comes from the pinned package, not from the internet at import.
+    assert os.environ["LITELLM_TELEMETRY"] == "False"
+    assert os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"

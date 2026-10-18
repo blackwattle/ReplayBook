@@ -10,12 +10,19 @@ The guard patches the socket module of the current process. It is a seatbelt, no
 firewall: it covers Replaybook itself and the built-in LiteLLM agent, not an external
 agent in its own process. For a hard boundary run the container with no network
 (compose.yaml does) or on an internal network with the model endpoint.
+
+Listening is not leaving: binding a local port (the HTTP doors of the mock servers) is
+allowed, and so is the passive name lookup that precedes a bind. Connecting to that port,
+even from the same process, still needs the host in the allowlist. A socket pair (what
+asyncio builds on Windows to wake its event loop) never leaves the host either and is let
+through.
 """
 
 from __future__ import annotations
 
 import os
 import socket
+import sys
 import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -99,6 +106,7 @@ class _Guard:
 _guard: _Guard | None = None
 _original: dict[str, Any] = {}
 _install_lock = threading.Lock()
+_local = threading.local()
 
 
 def _as_name(host: Any) -> str:
@@ -127,7 +135,7 @@ def _destination(sock: socket.socket, address: Any) -> tuple[str, int | None] | 
 
 def _check(sock: socket.socket, address: Any, verb: str) -> None:
     guard = _guard
-    if guard is None:
+    if guard is None or getattr(_local, "socketpair", False):
         return
     destination = _destination(sock, address)
     if destination is None:
@@ -167,6 +175,8 @@ def _getaddrinfo(
 ) -> Any:
     if host in (None, "", b""):  # wildcard for bind; no lookup leaves the host
         return _original["getaddrinfo"](host, port, family, type, proto, flags)
+    if flags & socket.AI_PASSIVE:  # resolving an address to listen on, not to reach
+        return _original["getaddrinfo"](host, port, family, type, proto, flags)
     name = _as_name(host)
     guard = _lookup_allowed(name, port, f"lookup of {name}")
     results = _original["getaddrinfo"](host, port, family, type, proto, flags)
@@ -199,6 +209,53 @@ def _gethostbyaddr(address: Any) -> Any:
     return _original["gethostbyaddr"](address)
 
 
+def _socketpair(*args: Any, **kwargs: Any) -> Any:
+    """A socket pair never leaves the host. On Windows the standard library builds one from a
+    loopback listener and a connect to it (asyncio needs one for every event loop), so that
+    connect is exempt from the check."""
+    _local.socketpair = True
+    try:
+        return _original["socketpair"](*args, **kwargs)
+    finally:
+        _local.socketpair = False
+
+
+def _proactor_connect(self: Any, conn: socket.socket, address: Any) -> Any:
+    _check(conn, address, "connect")
+    return _original["proactor_connect"](self, conn, address)
+
+
+def _proactor_sendto(
+    self: Any, conn: socket.socket, buf: Any, flags: int = 0, addr: Any = None
+) -> Any:
+    if addr is not None:
+        _check(conn, addr, "send")
+    return _original["proactor_sendto"](self, conn, buf, flags, addr)
+
+
+def _patch_windows_proactor() -> None:
+    """asyncio on Windows connects through the IOCP proactor (ConnectEx), not through
+    socket.connect, and resolves numeric addresses without getaddrinfo, so an async HTTP
+    client would slip past the socket patches. Check at the proactor too."""
+    if sys.platform != "win32":
+        return
+    from asyncio import windows_events
+
+    _original["proactor_connect"] = windows_events.IocpProactor.connect
+    _original["proactor_sendto"] = windows_events.IocpProactor.sendto
+    windows_events.IocpProactor.connect = _proactor_connect  # type: ignore[method-assign]
+    windows_events.IocpProactor.sendto = _proactor_sendto  # type: ignore[method-assign]
+
+
+def _unpatch_windows_proactor() -> None:
+    if "proactor_connect" not in _original:
+        return
+    from asyncio import windows_events
+
+    windows_events.IocpProactor.connect = _original["proactor_connect"]  # type: ignore[method-assign]
+    windows_events.IocpProactor.sendto = _original["proactor_sendto"]  # type: ignore[method-assign]
+
+
 def install(allowed: str | Iterable[str] = "") -> None:
     """Switch air-gapped mode on for this process. Calling it again replaces the allowlist."""
     global _guard
@@ -216,6 +273,7 @@ def install(allowed: str | Iterable[str] = "") -> None:
             gethostbyname=socket.gethostbyname,
             gethostbyname_ex=socket.gethostbyname_ex,
             gethostbyaddr=socket.gethostbyaddr,
+            socketpair=socket.socketpair,
         )
         _guard = _Guard(entries)
         socket.socket.connect = _connect  # type: ignore[method-assign]
@@ -225,6 +283,8 @@ def install(allowed: str | Iterable[str] = "") -> None:
         socket.gethostbyname = _gethostbyname
         socket.gethostbyname_ex = _gethostbyname_ex
         socket.gethostbyaddr = _gethostbyaddr
+        socket.socketpair = _socketpair
+        _patch_windows_proactor()
 
 
 def uninstall() -> None:
@@ -240,6 +300,8 @@ def uninstall() -> None:
         socket.gethostbyname = _original["gethostbyname"]
         socket.gethostbyname_ex = _original["gethostbyname_ex"]
         socket.gethostbyaddr = _original["gethostbyaddr"]
+        socket.socketpair = _original["socketpair"]
+        _unpatch_windows_proactor()
         _original.clear()
         _guard = None
 

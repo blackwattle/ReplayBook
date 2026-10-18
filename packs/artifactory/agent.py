@@ -61,3 +61,13 @@ def artifactory_repo(agent: Any, call: Any, text: str) -> tuple[str, str]:
 
 PROCEDURES = {"artifactory_repo": artifactory_repo}
 EXTRACTORS: dict[str, Any] = {}
+# The skill creates new permission targets; changing an existing one is a person's call.
+ESCALATE_CUES = {
+    "artifactory_repo": [
+        (
+            r"existing permission target",
+            "the ticket also asks to change an existing permission target, which the skill "
+            "does not cover",
+        )
+    ]
+}

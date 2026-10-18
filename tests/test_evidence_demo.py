@@ -33,7 +33,7 @@ def test_evidence_pack_is_complete_and_hashed(small_dataset: Path, tmp_path: Pat
         ts, ScriptedAgent(flaws=["unsafe_write", "guess_missing_info"]), run_dir, workers=2
     )
     store = AcceptedDifferences()
-    failing = [r for r in run.results if r.outcome == "fail"]
+    failing = [r for r in run.results if r.outcome in ("mismatch", "partial")]
     store.add("case", failing[0].case_id, "reviewed", "ben")
     acc_path = tmp_path / "accepted.yaml"
     store.save(acc_path)
@@ -54,7 +54,9 @@ def test_evidence_pack_is_complete_and_hashed(small_dataset: Path, tmp_path: Pat
     for needle in (
         "Scope and fingerprints",
         "Test-set source",
-        "Pass rate per request type",
+        "Outcomes and the go-live gate",
+        "Go-live gate: FAIL",
+        "passed ",
         "Wilson",
         "Failure groups",
         "Engineers did (history)",
@@ -94,8 +96,9 @@ def test_evidence_pack_is_complete_and_hashed(small_dataset: Path, tmp_path: Pat
 def test_demo_runs_end_to_end_offline(tmp_path: Path) -> None:
     lines: list[str] = []
     started = time.perf_counter()
+    # Seed 10 puts tickets that needed a person's judgement among the newest of every type.
     outcome = run_demo(
-        tmp_path / "demo", seed=11, n_tickets=700, cases=15, workers=3, say=lines.append
+        tmp_path / "demo", seed=10, n_tickets=700, cases=15, workers=3, say=lines.append
     )
     elapsed = time.perf_counter() - started
     text = "\n".join(lines)
@@ -113,6 +116,14 @@ def test_demo_runs_end_to_end_offline(tmp_path: Path) -> None:
     assert (
         "Guessed missing information" in text and "Wrong tool" in text and "Unsafe action" in text
     )
+    assert "Missed escalation" in text and "Missed escalation, e.g." in text
+    assert "Correct escalation, e.g." in text and "handed back:" in text
+    assert "correctly escalated" in text and "go-live gate PASS" in text
+    assert "8. Wrote an approval request" in text and "ready for a person's decision" in text
+    request = Path(outcome["approval_request"]["markdown"]).read_text(encoding="utf-8")
+    assert "BLOCKED" not in request and "Check after the write" in request
+    assert "no live runs yet" in request
+    assert all(v.startswith("0 of") for k, v in outcome["quality"].items() if "disagree" in k)
     assert outcome["exit_codes"] == [0, 0, 0], text
     assert all(v == 0 for k, v in outcome["quality"].items() if "false passes" in k), outcome[
         "quality"
@@ -125,9 +136,17 @@ def test_demo_runs_end_to_end_offline(tmp_path: Path) -> None:
     assert (evidence / "evidence.html").exists() and (evidence / "evidence.json").exists()
     assert verify_manifest(evidence) == []
     assert (tmp_path / "demo" / "assurance" / "accepted.yaml").exists()
+    assert (tmp_path / "demo" / "assurance" / "labels.yaml").exists()
     assert (tmp_path / "demo" / "assurance" / "baselines" / "kafka_topic.json").exists()
     data = json.loads((evidence / "evidence.json").read_text(encoding="utf-8"))
-    assert data["gate"] == "PASS"
+    assert data["gate"] == "PASS" and data["critical_gate"] == "PASS"
+    assert all(g["verdict"] == "PASS" for g in data["go_live"])
+    assert all(p["result_line"].startswith("passed ") for p in data["pass_rates"])
+    assert sum(p["outcomes"]["correct_escalation"] for p in data["pass_rates"]) >= 1
+    assert all(s["skill_version"] and len(s["skill_version_short"]) == 12 for s in data["scope"])
+    html = (evidence / "evidence.html").read_text(encoding="utf-8")
+    assert "Go-live gate: PASS" in html and "Correctly escalated" in html
+    assert "automated stand-in" in html, "the pack says the label check was not a person's"
     assert {p["request_type"] for p in data["pass_rates"]} == {
         "kafka_topic",
         "artifactory_repo",

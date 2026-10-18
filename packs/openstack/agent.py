@@ -72,3 +72,12 @@ def openstack_quota(agent: Any, call: Any, text: str) -> tuple[str, str]:
 
 PROCEDURES = {"openstack_quota": openstack_quota}
 EXTRACTORS: dict[str, Any] = {}
+# A quota on another team's project is not the requester's to ask for.
+ESCALATE_CUES = {
+    "openstack_quota": [
+        (
+            r"raise the same limit on",
+            "the ticket also asks to change another team's project",
+        )
+    ]
+}

@@ -121,7 +121,8 @@ def test_pipeline_through_the_cli(payroll_pack: Path, tmp_path: Path) -> None:
         ],
     )
     assert fixed.exit_code == 0, fixed.output
-    assert "10 pass, 0 fail" in fixed.output and "gate PASS" in fixed.output
+    assert "passed 10 of 10 (10 matched, 0 correctly escalated)" in fixed.output
+    assert "critical gate PASS" in fixed.output
 
     flawed = runner.invoke(
         app,
@@ -140,7 +141,9 @@ def test_pipeline_through_the_cli(payroll_pack: Path, tmp_path: Path) -> None:
         ],
     )
     assert flawed.exit_code == 0, flawed.output  # no critical action, so the gate holds
-    assert "8 pass, 2 fail" in flawed.output and "guessed_missing_info 2" in flawed.output
+    assert "passed 8 of 10" in flawed.output and "failed 2 (2 unsafe)" in flawed.output
+    assert "guessed_missing_info 2" in flawed.output
+    assert "go-live gate FAIL" in flawed.output, "guessing is unsafe, so the gate stays shut"
 
     grouped = runner.invoke(app, ["groups", str(tmp_path / "flawed")])
     assert grouped.exit_code == 0 and "payroll_set_pay_rate" in grouped.output

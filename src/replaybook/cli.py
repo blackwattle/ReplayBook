@@ -1,13 +1,26 @@
-"""Command-line entry point. Every command lives here so `replaybook --help` is the map."""
+"""Command-line entry point. Every command lives here so `replaybook --help` is the map.
+
+The workflow commands (generate, build-testset, replay, report, groups, check, evidence,
+shadow) call `replaybook.workflow`, which `replaybook mcp` exposes as MCP tools too, so the
+command line and an assistant do the same work on the same files.
+"""
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
 from replaybook import __version__
+from replaybook.workflow import (
+    DEFAULT_ACCEPTED,
+    DEFAULT_BASELINES,
+    DEFAULT_DATA_DIR,
+    DEFAULT_LABELS,
+)
 
 app = typer.Typer(
     help="Test ops agents against your own past tickets in a mock environment.",
@@ -15,8 +28,41 @@ app = typer.Typer(
     add_completion=False,
 )
 
-DEFAULT_DATA_DIR = Path("data/generated")
-DEFAULT_ACCEPTED = Path("assurance/accepted.yaml")
+KNOWLEDGE_HELP = (
+    "Dataset directory whose tickets the agent may search (behind the time-travel guard). "
+    "Default: the directory the test set was built from, when it still exists; 'none' to "
+    "attach nothing."
+)
+COMMAND_HELP = (
+    "External agent command (shell-split); with a launcher, the harness executable to run "
+    "instead of the one in the launcher file."
+)
+TRANSPORT_HELP = (
+    "How an external agent reaches the mock tools: stdio (one MCP server process per pack, "
+    "REPLAYBOOK_MCP_CONFIG), http (one MCP server over streamable HTTP, REPLAYBOOK_MCP_URL) or "
+    "tools (the function-calling endpoint, REPLAYBOOK_TOOLS_URL)."
+)
+AGENT_HELP = (
+    "scripted, skill, external, or the name of a launcher (see `replaybook launchers`) that "
+    "runs an off-the-shelf agent harness."
+)
+EFFORT_HELP = "Effort source: logged, status_time or created_to_resolved."
+LABELS_HELP = "Label spot-checks YAML (written by `replaybook labels check`)."
+MIN_PASS_RATE_HELP = (
+    "Minimum pass rate for the go-live gate, 0 to 1 (default: REPLAYBOOK_MIN_PASS_RATE, else 0.9)."
+)
+
+
+def run_workflow(fn: Callable[..., dict[str, Any]], *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Call a workflow function and print its message; bad arguments become usage errors."""
+    from replaybook.workflow import WorkflowError
+
+    try:
+        result = fn(*args, **kwargs)
+    except WorkflowError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(result["message"])
+    return result
 
 
 @app.callback()
@@ -53,10 +99,17 @@ def status() -> None:
     )
     state = f"offline: {client.offline_reason}" if client.offline else "online"
     typer.echo(f"models: fast={config.model_fast} strong={config.model_strong}; {state}")
+    if config.api_base:
+        typer.echo(
+            f"gateway: every model call goes to {config.api_base} (REPLAYBOOK_MODEL_API_BASE"
+            f"{', with REPLAYBOOK_MODEL_API_KEY' if config.api_key else ''}); costs the gateway "
+            "cannot report are recorded as unknown, not zero"
+        )
+    typer.echo(client.spend_line())
     if current["air_gapped"] and not client.offline:
         from urllib.parse import urlsplit
 
-        endpoint = urlsplit(config.ollama_base).hostname or ""
+        endpoint = urlsplit(config.api_base or config.ollama_base).hostname or ""
         if endpoint and not any(h.split(":")[0] == endpoint for h in current["allowed_hosts"]):
             typer.echo(f"warning: model endpoint {endpoint} is not in the allowlist")
     typer.echo(f"connection attempts refused by this process: {current['refused_connections']}")
@@ -64,6 +117,25 @@ def status() -> None:
         "telemetry: none. Replaybook sends nothing anywhere; the only network code is the "
         "model client, and air-gapped mode covers it."
     )
+    from replaybook.eval.live import RUNS_FILE, build_report, live_dir
+
+    directory = live_dir()
+    if (directory / RUNS_FILE).exists():
+        try:
+            report = build_report(directory)
+        except ValueError as exc:
+            typer.echo(f"live runs: {exc}")
+        else:
+            degraded = report.degraded
+            typer.echo(
+                f"live runs: {len(report.skills)} skill(s) in {directory}; "
+                + (
+                    "DEGRADED: "
+                    + "; ".join(f"{s.skill} ({', '.join(s.reasons)})" for s in degraded)
+                    if degraded
+                    else "none degraded"
+                )
+            )
 
 
 @app.command()
@@ -91,6 +163,113 @@ def packs(
             typer.echo(f"  {tool['server']:<12} {tool['name']:<44} {kind}{flag}")
 
 
+launchers_app = typer.Typer(
+    help="Launchers: run an off-the-shelf agent harness as the agent under test "
+    "(launchers/<name>.yaml).",
+    invoke_without_command=True,
+)
+app.add_typer(launchers_app, name="launchers")
+
+
+@launchers_app.callback()
+def launchers_list(ctx: typer.Context) -> None:
+    """List the launchers found on the search path (REPLAYBOOK_LAUNCHERS, ./launchers, the
+    repo's own) and whether each harness executable is on PATH."""
+    if ctx.invoked_subcommand is not None:
+        return
+    import shutil
+
+    from replaybook.agents.launchers import LauncherError, launchers
+
+    try:
+        reg = launchers()
+    except LauncherError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo("search path: " + ", ".join(str(p) for p in reg.search_path))
+    if not reg.launchers:
+        typer.echo("no launchers found")
+    for launcher in reg.launchers:
+        found = shutil.which(launcher.executable)
+        where = f"found at {found}" if found else "not on PATH"
+        typer.echo(f"{launcher.name}: {launcher.description}")
+        typer.echo(
+            f"  runs `{launcher.executable}` ({where}); MCP config passed as "
+            f"{launcher.mcp_config.pass_as} ({launcher.mcp_config.format}), prompt as "
+            f"{launcher.prompt.pass_as}; {len(launcher.disabled_tools)} built-in tools "
+            f"switched off; timeout {launcher.timeout_s:.0f}s; checked {launcher.checked or '-'}"
+        )
+    typer.echo(
+        "Use one with: replaybook replay --testset <set> --out <run> --agent <launcher>; "
+        "`replaybook launchers show <name>` prints the exact command."
+    )
+
+
+@launchers_app.command("show")
+def launchers_show(
+    name: Annotated[str, typer.Argument(help="Launcher name (see `replaybook launchers`).")],
+    testset: Annotated[
+        Path | None, typer.Option(help="Render for the first case of this test set.")
+    ] = None,
+) -> None:
+    """Dry run: print the command, environment, config file and prompt the launcher would use
+    for one case, without starting the harness."""
+    from replaybook.agents.external import case_files
+    from replaybook.agents.launchers import LauncherAgent, LauncherError, launchers
+    from replaybook.mock_env.registry import MockEnvironment
+    from replaybook.mock_env.world import TicketContext, WorldState
+    from replaybook.schema.testcase import TestSet
+
+    try:
+        launcher = launchers().launcher(name)
+    except LauncherError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    request_type: str | None = None
+    if testset is not None:
+        test_set = TestSet.model_validate_json(testset.read_text(encoding="utf-8"))
+        if not test_set.cases:
+            typer.echo("error: the test set has no cases", err=True)
+            raise typer.Exit(code=2)
+        world = test_set.cases[0].world.model_copy(deep=True)
+        request_type = test_set.request_type
+    else:
+        world = WorldState.from_inventory({}, {})
+        world.ticket = TicketContext(
+            id="T-0001",
+            summary="Example ticket for a launcher dry run",
+            description="This stands in for a real ticket; use --testset to render a real case.",
+            reporter="requester",
+            created="2026-01-01T00:00:00+00:00",
+        )
+    env = MockEnvironment(world)
+    agent = LauncherAgent(launcher, request_type)
+    with case_files(env) as files:
+        invocation = agent.invocation(env, files)
+        typer.echo(f"{launcher.name}: {launcher.description}")
+        typer.echo(f"file: {launcher.path}")
+        if launcher.docs:
+            typer.echo(f"docs: {launcher.docs} (checked {launcher.checked or '-'})")
+        typer.echo("\ncommand (one argument per line):")
+        for item in invocation.command:
+            typer.echo(f"  {item!r}")
+        typer.echo(f"\nworking directory: {invocation.cwd}")
+        extra = {k: v for k, v in invocation.env.items() if k not in os.environ}
+        typer.echo("environment added: " + (", ".join(f"{k}={v}" for k, v in extra.items()) or "-"))
+        typer.echo(f"prompt passed as: {launcher.prompt.pass_as}")
+        if invocation.config_path:
+            typer.echo(f"\nconfig file {invocation.config_path}:")
+            typer.echo(invocation.config_text or "")
+        typer.echo("\nprompt:")
+        typer.echo(invocation.prompt)
+        typer.echo(
+            f"built-in tools switched off: {', '.join(launcher.disabled_tools) or 'none declared'}"
+        )
+        if launcher.limitations:
+            typer.echo(f"limitations: {' '.join(launcher.limitations.split())}")
+    typer.echo("\n(The temporary files above were removed; nothing was started.)")
+
+
 @app.command()
 def sbom(
     out: Annotated[Path, typer.Option(help="Where to write the CycloneDX JSON.")] = Path(
@@ -109,6 +288,16 @@ def sbom(
 
 
 @app.command()
+def mcp() -> None:
+    """Serve the workflow (generate, build-testset, replay, report, groups, check, evidence,
+    shadow) as MCP tools over stdio, so an assistant can operate Replaybook. Same arguments
+    as the CLI, same files on disk, relative to the current directory."""
+    from replaybook.mcp_server import serve
+
+    serve()
+
+
+@app.command()
 def generate(
     out: Annotated[
         Path, typer.Option(help="Directory for the generated dataset.")
@@ -117,29 +306,59 @@ def generate(
     n: Annotated[int, typer.Option(help="Number of tickets (corrections are extra).")] = 3000,
 ) -> None:
     """Generate synthetic tickets with hidden ground truth."""
-    from replaybook.synth import generator
+    from replaybook import workflow
 
-    summary = generator.generate(out, generator.GenerateOptions(seed=seed, n_tickets=n))
-    typer.echo(
-        f"Wrote {summary['tickets']} tickets to {out} "
-        f"({summary['typed']} typed, {summary['by_type'].get('noise', 0)} noise, "
-        f"{summary['info_missing']} with missing info)."
-    )
+    run_workflow(workflow.generate, out, seed, n)
 
 
 @app.command("mock-server")
 def mock_server(
-    server: Annotated[str, typer.Option(help="ticket, or the name of a loaded pack.")],
+    server: Annotated[
+        str,
+        typer.Option(
+            help="ticket, knowledge, the name of a loaded pack, or all (every tool on one server)."
+        ),
+    ] = "all",
     world: Annotated[Path | None, typer.Option(help="World state JSON for this case.")] = None,
     record: Annotated[Path | None, typer.Option(help="JSONL file to append every call to.")] = None,
     knowledge: Annotated[
         Path | None, typer.Option(help="Dataset directory the knowledge server answers from.")
     ] = None,
+    http: Annotated[
+        bool, typer.Option(help="Serve over streamable HTTP at http://HOST:PORT/mcp, not stdio.")
+    ] = False,
+    host: Annotated[str, typer.Option(help="Bind address for --http.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port for --http; 0 takes a free one.")] = 0,
 ) -> None:
-    """Run one mock MCP server over stdio (for agents in another process)."""
-    from replaybook.mock_env.serve import serve_stdio
+    """Run the mock MCP servers for an agent in another process: over stdio (default) or over
+    streamable HTTP (--http). With --http the URL is printed as `REPLAYBOOK_LISTENING <url>`
+    once the port is bound. In air-gapped mode the client side must allowlist the host."""
+    from replaybook.mock_env.serve import serve_http, serve_stdio
 
-    serve_stdio(server, world, record, knowledge)
+    if http:
+        serve_http([server], world, record, knowledge, host=host, port=port, announce=typer.echo)
+    else:
+        serve_stdio(server, world, record, knowledge)
+
+
+@app.command("tool-endpoint")
+def tool_endpoint(
+    world: Annotated[Path | None, typer.Option(help="World state JSON for this case.")] = None,
+    record: Annotated[Path | None, typer.Option(help="JSONL file to append every call to.")] = None,
+    knowledge: Annotated[
+        Path | None, typer.Option(help="Dataset directory the knowledge server answers from.")
+    ] = None,
+    host: Annotated[str, typer.Option(help="Bind address.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port; 0 takes a free one.")] = 0,
+) -> None:
+    """Serve the mock tools to frameworks that use provider-native function calling instead of
+    MCP: GET /tools lists them as JSON Schema, POST /tools/<name> calls one. Every call is
+    recorded exactly like an MCP call. Prints `REPLAYBOOK_LISTENING <url>` once bound."""
+    from replaybook.mock_env.http_tools import serve_tools
+    from replaybook.mock_env.serve import build_environment
+
+    env = build_environment(None, world, record, knowledge)
+    serve_tools(env, host=host, port=port, announce=typer.echo)
 
 
 @app.command("build-testset")
@@ -161,31 +380,9 @@ def build_testset(
     ] = "none",
 ) -> None:
     """Build a test set from the newest tickets of one request type."""
-    from replaybook.adapters.synthetic import load_platform, load_tickets
-    from replaybook.eval.extract import make_extractor
-    from replaybook.eval.testset import build_test_set
+    from replaybook import workflow
 
-    tickets = load_tickets(data)
-    source = tickets[0].source if tickets else "synthetic"
-    test_set = build_test_set(
-        tickets,
-        load_platform(data),
-        request_type,
-        n=n,
-        source=source,
-        data_dir=str(data),
-        extractor=make_extractor(extract),
-    )
-    out = out or Path("testsets") / f"{request_type}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(test_set.model_dump_json(indent=2), encoding="utf-8")
-    sel = test_set.selection
-    unverified = f", {sel['unverified']} unverified" if sel.get("unverified") else ""
-    typer.echo(
-        f"{test_set.name}: {sel['selected']} cases ({sel['ask_cases']} expect a question"
-        f"{unverified}), from {sel['eligible']} eligible tickets; "
-        f"excluded {sel['excluded']} -> {out}"
-    )
+    run_workflow(workflow.build_testset, request_type, data, n, out, extract)
 
 
 @app.command()
@@ -274,16 +471,20 @@ def tools_import(
     json_file: Annotated[
         Path | None, typer.Option("--json", help="A saved tools/list result instead.")
     ] = None,
+    url: Annotated[
+        str, typer.Option(help="URL of an MCP server over streamable HTTP, e.g. http://h:8000/mcp.")
+    ] = "",
     out: Annotated[Path, typer.Option(help="Directory to create the pack in.")] = Path("packs"),
     description: Annotated[str, typer.Option(help="One line for pack.yaml.")] = "",
 ) -> None:
-    """Read tool names, schemas and read/write annotations from an MCP server (or a saved
-    JSON of them) and generate a pack with a recording mock and a rules.yaml skeleton."""
+    """Read tool names, schemas and read/write annotations from an MCP server (over stdio or
+    streamable HTTP, or a saved JSON of them) and generate a pack with a recording mock and a
+    rules.yaml skeleton."""
     from replaybook.tools_import import import_tools
 
     try:
         result = import_tools(
-            name, out, command=command, json_path=json_file, description=description
+            name, out, command=command, json_path=json_file, url=url, description=description
         )
     except (ValueError, FileExistsError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
@@ -299,7 +500,27 @@ def tools_import(
     )
 
 
-EFFORT_HELP = "Effort source: logged, status_time or created_to_resolved."
+@tools_app.command("schema")
+def tools_schema(
+    shape: Annotated[
+        str, typer.Option(help="openai (the function-calling shape) or mcp (name, inputSchema).")
+    ] = "openai",
+    out: Annotated[Path | None, typer.Option(help="Write to this file instead of stdout.")] = None,
+) -> None:
+    """Print the mock tools as JSON Schema for frameworks that use provider-native function
+    calling. The same list is served by `replaybook tool-endpoint` at GET /tools."""
+    from replaybook.mock_env.http_tools import write_schema
+    from replaybook.mock_env.registry import describe_all_tools
+
+    try:
+        text = write_schema(describe_all_tools(), shape, out)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if out is None:
+        typer.echo(text, nl=False)
+    else:
+        typer.echo(f"Wrote {out}")
+
 
 tickets_app = typer.Typer(help="Bring your own ticket system: import tickets from a table.")
 app.add_typer(tickets_app, name="tickets")
@@ -502,9 +723,10 @@ def servicenow_export(
 def replay(
     testset: Annotated[Path, typer.Option(help="Test set JSON from build-testset.")],
     out: Annotated[Path, typer.Option(help="Run directory for cases.jsonl and results.json.")],
-    agent: Annotated[str, typer.Option(help="scripted, skill or external.")] = "scripted",
+    agent: Annotated[str, typer.Option(help=AGENT_HELP)] = "scripted",
     flaws: Annotated[str, typer.Option(help="Comma-separated scripted-agent flaws.")] = "",
-    command: Annotated[str, typer.Option(help="External agent command (shell-split).")] = "",
+    command: Annotated[str, typer.Option(help=COMMAND_HELP)] = "",
+    transport: Annotated[str, typer.Option(help=TRANSPORT_HELP)] = "stdio",
     workers: Annotated[int, typer.Option(help="Parallel cases.")] = 4,
     seed: Annotated[int, typer.Option(help="Seed recorded with the run.")] = 0,
     resume: Annotated[bool, typer.Option(help="Reuse finished cases in the run directory.")] = True,
@@ -512,59 +734,61 @@ def replay(
         Path, typer.Option(help="Accepted differences YAML.")
     ] = DEFAULT_ACCEPTED,
     knowledge: Annotated[Path | None, typer.Option(help=KNOWLEDGE_HELP)] = None,
+    labels_file: Annotated[Path, typer.Option(help=LABELS_HELP)] = DEFAULT_LABELS,
+    min_pass_rate: Annotated[float | None, typer.Option(help=MIN_PASS_RATE_HELP)] = None,
 ) -> None:
-    """Replay an agent against a test set and score every case."""
-    from replaybook.eval.accepted import AcceptedDifferences
-    from replaybook.eval.runner import run_replay
-    from replaybook.schema.testcase import TestSet
+    """Replay an agent against a test set and score every case. Exit code 1 on a critical
+    unsafe action or an agent error; the go-live gate is printed beside it."""
+    from replaybook import workflow
 
-    test_set = TestSet.model_validate_json(testset.read_text(encoding="utf-8"))
-    run = run_replay(
-        test_set,
-        make_agent(agent, flaws, command, test_set.request_type),
+    result = run_workflow(
+        workflow.replay,
+        testset,
         out,
-        workers=workers,
-        resume=resume,
-        seed=seed,
-        accepted=AcceptedDifferences.load(accepted_file),
-        knowledge=knowledge_for(test_set, knowledge),
+        agent,
+        flaws,
+        command,
+        workers,
+        seed,
+        resume,
+        accepted_file,
+        knowledge,
+        transport,
+        labels_file,
+        min_pass_rate,
     )
-    print_summary(run)
-    raise typer.Exit(code=0 if run.summary.gate == "pass" else 1)
+    raise typer.Exit(code=result["exit_code"])
 
 
 @app.command()
-def report(run_dir: Annotated[Path, typer.Argument(help="Run directory from replay.")]) -> None:
-    """Print the summary and the non-passing cases of a finished run."""
-    from replaybook.eval.runner import load_run
+def report(
+    run_dir: Annotated[Path, typer.Argument(help="Run directory from replay.")],
+    labels_file: Annotated[Path, typer.Option(help=LABELS_HELP)] = DEFAULT_LABELS,
+    min_pass_rate: Annotated[float | None, typer.Option(help=MIN_PASS_RATE_HELP)] = None,
+) -> None:
+    """Print the result line, the go-live gate and the cases that did not pass (accepted
+    differences included) of a finished run."""
+    from replaybook import workflow
 
-    run = load_run(run_dir)
-    print_summary(run)
-    for r in run.results:
-        if r.outcome != "pass":
-            note = r.accepted_reason or (r.diffs[0].detail if r.diffs else "")
-            typer.echo(f"  {r.case_id:<10} {r.short():<42} {note}")
+    result = run_workflow(workflow.report, run_dir, labels_file, min_pass_rate)
+    for r in result["non_passing"]:
+        typer.echo(f"  {r['case_id']:<10} {r['short']:<42} {r['note']}")
+    for r in result["correct_escalations"]:
+        typer.echo(f"  {r['case_id']:<10} {'correct_escalation':<42} handed back: {r['reason']}")
 
 
 @app.command()
 def groups(run_dir: Annotated[Path, typer.Argument(help="Run directory from replay.")]) -> None:
     """Group a run's failures by cause, with two examples each, and save groups.json."""
-    from replaybook.eval.groups import group_failures
-    from replaybook.eval.runner import load_run
+    from replaybook import workflow
 
-    run = load_run(run_dir)
-    found = group_failures(run.results)
-    (run_dir / "groups.json").write_text(
-        "[" + ",\n".join(g.model_dump_json() for g in found) + "]", encoding="utf-8"
-    )
-    if not found:
-        typer.echo("No failures to group.")
-    for g in found:
-        flag = "  [history likely outdated]" if g.likely_history_outdated else ""
-        typer.echo(f"{g.id} ({g.count}) {g.label}{flag}")
-        typer.echo(f"    {g.cause}")
-        for ex in g.examples:
-            typer.echo(f"    - {ex.case_id}: {ex.summary[:70]}")
+    result = run_workflow(workflow.groups, run_dir)
+    for g in result["groups"]:
+        flag = "  [history likely outdated]" if g["likely_history_outdated"] else ""
+        typer.echo(f"{g['id']} ({g['count']}) {g['label']}{flag}")
+        typer.echo(f"    {g['cause']}")
+        for ex in g["examples"]:
+            typer.echo(f"    - {ex['case_id']}: {ex['summary'][:70]}")
 
 
 @app.command()
@@ -591,6 +815,7 @@ def accept(
     from replaybook.eval import accepted as acc
     from replaybook.eval.groups import group_failures
     from replaybook.eval.runner import load_run, reapply_accepted
+    from replaybook.workflow import summary_line
 
     store = acc.AcceptedDifferences.load(accepted_file)
     if suggest:
@@ -626,16 +851,14 @@ def accept(
     store.save(accepted_file)
     typer.echo(f"Recorded {entry.id} ({entry.kind}, {scope} {match[:60]}) until {entry.expires}")
     if run is not None:
-        print_summary(reapply_accepted(run, store))
+        typer.echo(summary_line(reapply_accepted(run, store)))
 
 
 @app.command()
 def approve(
     run: Annotated[Path, typer.Option(help="Run directory to approve as the baseline.")],
     approver: Annotated[str, typer.Option(help="Who approves this run.")],
-    baseline_dir: Annotated[Path, typer.Option(help="Where baselines live.")] = Path(
-        "assurance/baselines"
-    ),
+    baseline_dir: Annotated[Path, typer.Option(help="Where baselines live.")] = DEFAULT_BASELINES,
 ) -> None:
     """Mark a run as the baseline for its test set."""
     from replaybook.eval.baseline import approve as approve_run
@@ -654,61 +877,55 @@ def approve(
 def check(
     testset: Annotated[Path, typer.Option(help="Test set JSON from build-testset.")],
     out: Annotated[Path, typer.Option(help="Run directory for the check run.")],
-    agent: Annotated[str, typer.Option(help="scripted, skill or external.")] = "scripted",
+    agent: Annotated[str, typer.Option(help=AGENT_HELP)] = "scripted",
     flaws: Annotated[str, typer.Option(help="Comma-separated scripted-agent flaws.")] = "",
-    command: Annotated[str, typer.Option(help="External agent command (shell-split).")] = "",
+    command: Annotated[str, typer.Option(help=COMMAND_HELP)] = "",
+    transport: Annotated[str, typer.Option(help=TRANSPORT_HELP)] = "stdio",
     workers: Annotated[int, typer.Option(help="Parallel cases.")] = 4,
     force: Annotated[
         bool, typer.Option(help="Re-run even if the fingerprint is unchanged.")
     ] = False,
-    baseline_dir: Annotated[Path, typer.Option(help="Where baselines live.")] = Path(
-        "assurance/baselines"
-    ),
+    baseline_dir: Annotated[Path, typer.Option(help="Where baselines live.")] = DEFAULT_BASELINES,
     accepted_file: Annotated[
         Path, typer.Option(help="Accepted differences YAML.")
     ] = DEFAULT_ACCEPTED,
     knowledge: Annotated[Path | None, typer.Option(help=KNOWLEDGE_HELP)] = None,
+    go_live: Annotated[
+        bool,
+        typer.Option(
+            "--go-live",
+            help="Also require the go-live gate (minimum pass rate, no unsafe outcome, no "
+            "agent error, labels spot-checked, current skill version); exit 1 if it fails.",
+        ),
+    ] = False,
+    labels_file: Annotated[Path, typer.Option(help=LABELS_HELP)] = DEFAULT_LABELS,
+    min_pass_rate: Annotated[float | None, typer.Option(help=MIN_PASS_RATE_HELP)] = None,
 ) -> None:
     """Re-run when the fingerprint changed and report only what differs from the baseline.
 
-    Exit codes: 0 pass, 1 regression or critical failure, 2 error.
+    Exit codes: 0 pass, 1 regression or critical failure (or, with --go-live, a failed
+    go-live gate), 2 error.
     """
-    from replaybook.eval.accepted import AcceptedDifferences
-    from replaybook.eval.baseline import check as run_check
-    from replaybook.schema.testcase import TestSet
+    from replaybook import workflow
 
-    test_set = TestSet.model_validate_json(testset.read_text(encoding="utf-8"))
-    report_, run_ = run_check(
-        test_set,
-        make_agent(agent, flaws, command, test_set.request_type),
+    result = run_workflow(
+        workflow.check,
+        testset,
         out,
-        baseline_dir=baseline_dir,
-        accepted=AcceptedDifferences.load(accepted_file),
-        force=force,
-        workers=workers,
-        knowledge=knowledge_for(test_set, knowledge),
+        agent,
+        flaws,
+        command,
+        workers,
+        force,
+        baseline_dir,
+        accepted_file,
+        knowledge,
+        transport,
+        go_live,
+        labels_file,
+        min_pass_rate,
     )
-    typer.echo(f"{report_.test_set_name}: {report_.message}")
-    for change in report_.regressions:
-        typer.echo(
-            f"  REGRESSION {change.case_id}: {change.before} -> {change.after} "
-            f"({change.reason_after}) {change.detail}"
-        )
-    for change in report_.changed:
-        typer.echo(
-            f"  CHANGED    {change.case_id}: {change.reason_before} -> {change.reason_after}"
-        )
-    for change in report_.improvements:
-        typer.echo(f"  IMPROVED   {change.case_id}: {change.before} -> {change.after}")
-    for case_id in report_.new_cases:
-        typer.echo(f"  NEW        {case_id}")
-    for case_id in report_.removed_cases:
-        typer.echo(f"  REMOVED    {case_id}")
-    if report_.reran and report_.critical_failures:
-        typer.echo(f"  critical failures now: {report_.critical_failures}")
-    if run_ is not None:
-        print_summary(run_)
-    raise typer.Exit(code=report_.exit_code)
+    raise typer.Exit(code=result["exit_code"])
 
 
 @app.command()
@@ -723,75 +940,360 @@ def evidence(
         list[Path] | None, typer.Option(help="Test set JSON per run (same order).")
     ] = None,
     title: Annotated[str, typer.Option(help="Pack title.")] = "Replaybook evidence pack",
-    baseline_dir: Annotated[Path, typer.Option(help="Where baselines live.")] = Path(
-        "assurance/baselines"
-    ),
+    baseline_dir: Annotated[Path, typer.Option(help="Where baselines live.")] = DEFAULT_BASELINES,
     accepted_file: Annotated[
         Path, typer.Option(help="Accepted differences YAML.")
     ] = DEFAULT_ACCEPTED,
     shadow: Annotated[
         Path | None, typer.Option(help="Shadow directory from `replaybook shadow`.")
     ] = None,
+    labels_file: Annotated[Path, typer.Option(help=LABELS_HELP)] = DEFAULT_LABELS,
+    min_pass_rate: Annotated[float | None, typer.Option(help=MIN_PASS_RATE_HELP)] = None,
+    live: Annotated[
+        Path | None,
+        typer.Option(help="Live-runs directory from `replaybook live record` (go-live metrics)."),
+    ] = None,
 ) -> None:
-    """Write the evidence pack (HTML, JSON and SHA-256 manifest) for one or more runs."""
-    from replaybook.eval.accepted import AcceptedDifferences
-    from replaybook.eval.baseline import CheckReport, load_baseline
-    from replaybook.eval.evidence import EvidenceInputs, RunBundle, build_evidence
-    from replaybook.eval.runner import load_run
-    from replaybook.eval.shadow import load_report
+    """Write the evidence pack (HTML, JSON and SHA-256 manifest) for one or more runs. Its
+    verdict is the go-live gate."""
+    from replaybook import workflow
+
+    run_workflow(
+        workflow.evidence,
+        run,
+        out,
+        testset,
+        title,
+        baseline_dir,
+        accepted_file,
+        shadow,
+        labels_file,
+        min_pass_rate,
+        live,
+    )
+
+
+skills_app = typer.Typer(help="Skills: the SKILL.md files agents follow, and their checks.")
+app.add_typer(skills_app, name="skills")
+
+
+@skills_app.command("validate")
+def skills_validate(
+    request_type: Annotated[
+        str, typer.Option("--type", help="One request type (default: every skill of the packs).")
+    ] = "",
+    file: Annotated[
+        Path | None, typer.Option(help="A SKILL.md file, e.g. one a pack does not list yet.")
+    ] = None,
+) -> None:
+    """Check that every write a skill lists has a read-only check (`verify:` in its front
+    matter) whose templates name the write's own arguments. Exit 1 when any skill is
+    invalid; replay, shadow record and approval requests refuse an invalid skill."""
+    from replaybook import workflow
+
+    result = run_workflow(workflow.skills_validate, request_type, file)
+    raise typer.Exit(code=0 if result["valid"] else 1)
+
+
+checks_app = typer.Typer(
+    help="Verification checks for live runtimes: render a write's check, compare a read's "
+    "result with it. Replaybook itself never runs a check."
+)
+app.add_typer(checks_app, name="checks")
+
+
+def _json_input(value: str, what: str) -> object:
+    """A JSON value given inline, as a file path, or as - for stdin."""
+    import json
+    import sys
+
+    try:
+        if value == "-":
+            return json.loads(sys.stdin.read())
+        if value.lstrip().startswith(("{", "[")):
+            return json.loads(value)
+        return json.loads(Path(value).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(f"{what}: not JSON, a JSON file or - ({exc})") from exc
+
+
+@checks_app.command("render")
+def checks_render(
+    skill: Annotated[str, typer.Option("--skill", help="The request type whose skill to use.")],
+    write: Annotated[
+        str,
+        typer.Option(help='The write as JSON {"tool": ..., "args": {...}}, a JSON file, or -.'),
+    ],
+) -> None:
+    """Print the check that confirms one write: the read tool, its arguments, the state it
+    must show and the timeout, rendered from the skill's `verify:`. Exit 2 when the skill
+    has no check for that write."""
+    import json
+
+    from replaybook.checks import checks_for, require_valid_skill
+
+    data = _json_input(write, "--write")
+    if not isinstance(data, dict) or not isinstance(data.get("tool"), str):
+        raise typer.BadParameter('--write must be {"tool": ..., "args": {...}}')
+    try:
+        require_valid_skill(skill)
+        checks = checks_for(skill)
+    except (KeyError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    check = checks.get(data["tool"])
+    if check is None:
+        typer.echo(f"error: the {skill} skill has no check for {data['tool']}", err=True)
+        raise typer.Exit(code=2)
+    typer.echo(json.dumps(check.render(dict(data.get("args") or {})), indent=2))
+
+
+@checks_app.command("compare")
+def checks_compare(
+    result: Annotated[
+        str, typer.Option(help="The read's result as JSON, a JSON file, or - for stdin.")
+    ],
+    expect: Annotated[str, typer.Option(help="The rendered `expect` as JSON or a JSON file.")] = "",
+    check: Annotated[
+        str,
+        typer.Option(help="A check from `checks render` (JSON or a file); its expect is used."),
+    ] = "",
+) -> None:
+    """Compare a read's result with a check's expected state and print verified,
+    verify_failed or verify_error with the differences. Exit 0 verified, 1 verify_failed,
+    2 verify_error."""
+    import json
+
+    from replaybook.checks import compare
+
+    if bool(expect) == bool(check):
+        raise typer.BadParameter("give exactly one of --expect or --check")
+    if check:
+        rendered = _json_input(check, "--check")
+        if not isinstance(rendered, dict) or "expect" not in rendered:
+            raise typer.BadParameter("--check must be a check from `replaybook checks render`")
+        wanted = rendered["expect"]
+    else:
+        wanted = _json_input(expect, "--expect")
+    try:
+        actual = _json_input(result, "--result")
+    except typer.BadParameter as exc:
+        outcome = {"status": "verify_error", "differences": [f"no readable result: {exc}"]}
+        typer.echo(json.dumps(outcome, indent=2))
+        raise typer.Exit(code=2) from exc
+    found = compare(wanted, actual)
+    typer.echo(json.dumps(found.as_dict(), indent=2))
+    raise typer.Exit(code={"verified": 0, "verify_failed": 1}.get(found.status, 2))
+
+
+@app.command("approval-request")
+def approval_request(
+    skill: Annotated[str, typer.Option("--skill", help="The request type whose skill would act.")],
+    plan: Annotated[
+        str,
+        typer.Option(
+            help='Planned writes as JSON [{"tool": ..., "args": {...}}], a JSON file, or -.'
+        ),
+    ],
+    out: Annotated[Path, typer.Option(help="Directory for approval-request.md and .json.")],
+    ticket: Annotated[str, typer.Option(help="The live ticket the writes are for.")] = "",
+    runs: Annotated[
+        Path, typer.Option(help="Where to look for the replay of this skill version.")
+    ] = Path("runs"),
+    evidence: Annotated[
+        Path, typer.Option(help="Where to look for that replay's evidence pack.")
+    ] = Path("evidence"),
+    live_dir: Annotated[
+        Path | None,
+        typer.Option(help="Live-runs directory (default: REPLAYBOOK_LIVE_DIR, else live)."),
+    ] = None,
+    labels_file: Annotated[Path, typer.Option(help=LABELS_HELP)] = DEFAULT_LABELS,
+    min_pass_rate: Annotated[float | None, typer.Option(help=MIN_PASS_RATE_HELP)] = None,
+    window: Annotated[
+        int | None,
+        typer.Option(
+            help="Live runs the verification rate covers (default: REPLAYBOOK_LIVE_WINDOW, "
+            "else 30)."
+        ),
+    ] = None,
+) -> None:
+    """Write what an approver sees before approving a skill's writes on a live ticket: the
+    skill and its version, the replay result and date for that version, the live
+    verification rate, each planned write with its check, and the replay's evidence pack.
+    Exit 1, BLOCKED at the top, when the version has no replay, its replay failed the
+    go-live gate, or the plan holds a write the skill does not cover. Nothing is approved."""
+    from replaybook import workflow
+
+    result = run_workflow(
+        workflow.approval_request,
+        skill,
+        _json_input(plan, "--plan"),
+        out,
+        ticket or None,
+        runs,
+        evidence,
+        live_dir,
+        labels_file,
+        min_pass_rate,
+        window,
+    )
+    raise typer.Exit(code=result["exit_code"])
+
+
+live_app = typer.Typer(
+    help="After go-live: record the live runs a team's runtime reports, and watch each skill's "
+    "approval, verification and escalation rates."
+)
+app.add_typer(live_app, name="live")
+LIVE_DIR_HELP = (
+    "Directory of runs.jsonl and degraded.jsonl (default: REPLAYBOOK_LIVE_DIR, else live)."
+)
+WINDOW_HELP = (
+    "How many of each skill's latest runs the rates cover (default: REPLAYBOOK_LIVE_WINDOW, "
+    "else 30)."
+)
+MIN_APPROVAL_HELP = (
+    "Approval rate below which a skill is degraded (default: REPLAYBOOK_MIN_APPROVAL_RATE, "
+    "else 0.8)."
+)
+MIN_VERIFICATION_HELP = (
+    "Verification rate below which a skill is degraded (default: "
+    "REPLAYBOOK_MIN_VERIFICATION_RATE, else 0.95)."
+)
+
+
+@live_app.command("record")
+def live_record(
+    run: Annotated[
+        str,
+        typer.Option(
+            help="The run as JSON (skill, skill_version, ticket, approval, writes, ...), a "
+            "file, or -."
+        ),
+    ],
+    live_dir: Annotated[Path | None, typer.Option(help=LIVE_DIR_HELP)] = None,
+    discovery: Annotated[
+        Path | None,
+        typer.Option(help="Discovery report for hours saved (default: discovery/discovery.json)."),
+    ] = None,
+) -> None:
+    """Append one live run, as a team's runtime reports it, to runs.jsonl: the approval, each
+    write's verification result, any hand-back, and the hours saved Replaybook computes. A
+    record that breaks the live contract (writes without approval, a failed check without a
+    hand-back) is refused."""
+    from replaybook import workflow
+
+    run_workflow(workflow.live_record, _json_input(run, "--run"), live_dir, discovery)
+
+
+@live_app.command("report")
+def live_report_cmd(
+    live_dir: Annotated[Path | None, typer.Option(help=LIVE_DIR_HELP)] = None,
+    window: Annotated[int | None, typer.Option(help=WINDOW_HELP)] = None,
+    skill: Annotated[str, typer.Option(help="One request type (default: every skill).")] = "",
+    min_approval_rate: Annotated[float | None, typer.Option(help=MIN_APPROVAL_HELP)] = None,
+    min_verification_rate: Annotated[float | None, typer.Option(help=MIN_VERIFICATION_HELP)] = None,
+) -> None:
+    """Per skill: the rolling approval, verification and escalation rates, the hours saved,
+    and DEGRADED when a rate falls below its threshold."""
+    from replaybook import workflow
+
+    run_workflow(
+        workflow.live_report, live_dir, window, skill, min_approval_rate, min_verification_rate
+    )
+
+
+@live_app.command("check")
+def live_check_cmd(
+    live_dir: Annotated[Path | None, typer.Option(help=LIVE_DIR_HELP)] = None,
+    window: Annotated[int | None, typer.Option(help=WINDOW_HELP)] = None,
+    min_approval_rate: Annotated[float | None, typer.Option(help=MIN_APPROVAL_HELP)] = None,
+    min_verification_rate: Annotated[float | None, typer.Option(help=MIN_VERIFICATION_HELP)] = None,
+) -> None:
+    """For CI or a scheduler: exit 1 when any skill is degraded, 0 otherwise. Each change of a
+    skill's state is appended to degraded.jsonl."""
+    from replaybook import workflow
+
+    result = run_workflow(
+        workflow.live_check, live_dir, window, min_approval_rate, min_verification_rate
+    )
+    raise typer.Exit(code=result["exit_code"])
+
+
+labels_app = typer.Typer(
+    help="Expected outcomes (act or escalate): the labelling rule's sample and a person's "
+    "spot-check."
+)
+app.add_typer(labels_app, name="labels")
+
+
+@labels_app.command("sample")
+def labels_sample(
+    testset: Annotated[Path, typer.Option(help="Test set JSON.")],
+    out: Annotated[
+        Path | None, typer.Option(help="Write the review sheet (Markdown) here.")
+    ] = None,
+) -> None:
+    """List the cases to spot-check (at least 10 or 10% of the set, whichever is larger) with
+    each label and why the rule gave it; --out writes a review sheet."""
+    from replaybook import workflow
+
+    result = run_workflow(workflow.labels_sample, testset, out)
+    if out is None:
+        typer.echo("")
+        typer.echo(result["sheet"])
+
+
+@labels_app.command("check")
+def labels_check(
+    testset: Annotated[Path, typer.Option(help="Test set JSON; changed labels are written back.")],
+    reviewer: Annotated[str, typer.Option(help="Who did the spot-check.")],
+    cases: Annotated[
+        str,
+        typer.Option(
+            help="Comma-separated case ids you checked (default: the suggested sample, see "
+            "`labels sample`)."
+        ),
+    ] = "",
+    set_label: Annotated[
+        list[str] | None,
+        typer.Option("--set", help="CASE=act or CASE=escalate for a label you changed (repeat)."),
+    ] = None,
+    note: Annotated[str, typer.Option(help="Why you changed labels, kept with the change.")] = "",
+    labels_file: Annotated[Path, typer.Option(help=LABELS_HELP)] = DEFAULT_LABELS,
+) -> None:
+    """Record a person's spot-check of the escalation labels: who, when, which cases and
+    which labels changed. The go-live gate needs one covering at least 10 cases or 10% of
+    the set. Not available through `replaybook mcp`: a person signs this."""
+    from replaybook.eval.labels import LabelChecks, record_check
     from replaybook.schema.testcase import TestSet
 
-    shadow_report = load_report(shadow) if shadow is not None else None
-    if shadow is not None and shadow_report is None:
-        typer.echo(
-            f"error: no shadow.json in {shadow}; run `replaybook shadow record` first", err=True
-        )
-        raise typer.Exit(code=2)
-
-    bundles = []
-    for index, run_dir in enumerate(run):
-        loaded = load_run(run_dir)
-        if testset and index < len(testset):
-            ts_path: Path | None = testset[index]
-            ts = TestSet.model_validate_json(ts_path.read_text(encoding="utf-8"))
-        else:
-            ts_path = None
-            ts = TestSet(
-                name=loaded.test_set_name,
-                request_type=loaded.test_set_request_type,
-                source="unknown",
-                data_dir="",
-                created_at=loaded.created_at,
-            )
-        check_path = run_dir / "check.json"
-        check_report = (
-            CheckReport.model_validate_json(check_path.read_text(encoding="utf-8"))
-            if check_path.exists()
-            else None
-        )
-        bundles.append(
-            RunBundle(
-                run=loaded,
-                test_set=ts,
-                run_dir=run_dir,
-                test_set_path=ts_path,
-                baseline=load_baseline(loaded.test_set_name, baseline_dir),
-                check=check_report,
-            )
-        )
-    paths = build_evidence(
-        EvidenceInputs(
-            title=title,
-            bundles=bundles,
-            accepted=AcceptedDifferences.load(accepted_file),
-            accepted_path=accepted_file if accepted_file.exists() else None,
-            baseline_dir=baseline_dir,
-            shadow=shadow_report,
-            shadow_dir=shadow,
-        ),
-        out,
+    if not testset.is_file():
+        raise typer.BadParameter(f"no test set at {testset}")
+    changes: dict[str, str] = {}
+    for item in set_label or []:
+        case_id, sep, value = item.partition("=")
+        if not sep or not case_id.strip():
+            raise typer.BadParameter(f"--set takes CASE=act or CASE=escalate, not '{item}'")
+        changes[case_id.strip()] = value.strip()
+    test_set = TestSet.model_validate_json(testset.read_text(encoding="utf-8"))
+    store = LabelChecks.load(labels_file)
+    ids = [c.strip() for c in cases.split(",") if c.strip()] or None
+    try:
+        updated, entry = record_check(test_set, store, reviewer, ids, changes, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if entry.changed:
+        testset.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+    store.save(labels_file)
+    escalate = sum(1 for v in entry.labels.values() if v == "escalate")
+    typer.echo(
+        f"{entry.id}: {entry.reviewer} checked {len(entry.labels)} of {entry.cases_in_set} labels "
+        f"on {entry.test_set} ({escalate} escalate, {len(entry.labels) - escalate} act) -> "
+        f"{labels_file}"
     )
-    typer.echo(f"Wrote {paths['html']}, {paths['json']} and {paths['manifest']}")
+    for change in entry.changed:
+        typer.echo(f"  CHANGED {change.case_id}: {change.was} -> {change.now} ({testset} updated)")
 
 
 shadow_app = typer.Typer(
@@ -807,9 +1309,10 @@ def shadow_record(
     data: Annotated[
         Path, typer.Option(help="Dataset directory with the current tickets.jsonl.")
     ] = DEFAULT_DATA_DIR,
-    agent: Annotated[str, typer.Option(help="scripted, skill or external.")] = "scripted",
+    agent: Annotated[str, typer.Option(help=AGENT_HELP)] = "scripted",
     flaws: Annotated[str, typer.Option(help="Comma-separated scripted-agent flaws.")] = "",
-    command: Annotated[str, typer.Option(help="External agent command (shell-split).")] = "",
+    command: Annotated[str, typer.Option(help=COMMAND_HELP)] = "",
+    transport: Annotated[str, typer.Option(help=TRANSPORT_HELP)] = "stdio",
     extract: Annotated[
         str, typer.Option(help="Seed empty worlds from the text: none, rules or model.")
     ] = "none",
@@ -817,32 +1320,19 @@ def shadow_record(
 ) -> None:
     """Run the agent on every OPEN ticket of a request type against the mock and store the
     actions it proposed. Nothing is executed and nothing is written to the ticket system."""
-    from replaybook.adapters.synthetic import load_platform, load_tickets
-    from replaybook.eval.extract import make_extractor
-    from replaybook.eval.shadow import record
-    from replaybook.mock_env.knowledge import Corpus
+    from replaybook import workflow
 
-    corpus = (
-        None
-        if (knowledge and str(knowledge).lower() == "none")
-        else Corpus.maybe(knowledge or data)
-    )
-    stats = record(
-        load_tickets(data),
-        load_platform(data),
+    run_workflow(
+        workflow.shadow_record,
         request_type,
-        make_agent(agent, flaws, command, request_type),
         out,
-        knowledge=corpus,
-        extractor=make_extractor(extract),
-    )
-    typer.echo(
-        f"{request_type}: {stats['open_tickets']} open tickets, {stats['recorded']} proposals "
-        f"recorded ({stats['asked']} would ask the requester, {stats['proposed_writes']} proposed "
-        f"writes), {stats['already_recorded']} already recorded for this agent -> {out}"
-    )
-    typer.echo(
-        "Nothing was executed. Score them once the tickets are resolved: replaybook shadow score"
+        data,
+        agent,
+        flaws,
+        command,
+        extract,
+        knowledge,
+        transport,
     )
 
 
@@ -858,24 +1348,9 @@ def shadow_score(
     ] = "none",
 ) -> None:
     """Score stored proposals whose tickets engineers have since resolved."""
-    from replaybook.adapters.synthetic import load_platform, load_tickets
-    from replaybook.eval.extract import make_extractor
-    from replaybook.eval.shadow import score
+    from replaybook import workflow
 
-    stats = score(load_tickets(data), load_platform(data), out, extractor=make_extractor(extract))
-    report = stats["report"]
-    s = report.summary
-    typer.echo(
-        f"scored {stats['scored_now']} new proposal(s); {report.scored} scored in total, "
-        f"{report.pending} pending, {report.unscorable} unscorable. "
-        f"{s.passed} pass, {s.failed} fail, {s.errors} error (pass rate {s.pass_rate:.0%}, "
-        f"95% CI {s.wilson_low:.0%}-{s.wilson_high:.0%}); unsafe proposals caught: "
-        f"{len(report.unsafe_caught)}"
-    )
-    for u in report.unsafe_caught:
-        typer.echo(
-            f"  UNSAFE {u['ticket_id']}: {', '.join(u['tools'])} ({u['severity']}) {u['detail']}"
-        )
+    run_workflow(workflow.shadow_score, out, data, extract)
 
 
 @shadow_app.command("report")
@@ -883,21 +1358,9 @@ def shadow_report_cmd(
     out: Annotated[Path, typer.Argument(help="Shadow directory.")],
 ) -> None:
     """Print the shadow summary (what the evidence pack shows under Shadow mode)."""
-    from replaybook.eval.shadow import load_report
+    from replaybook import workflow
 
-    report = load_report(out)
-    if report is None:
-        typer.echo(f"error: no shadow.json in {out}", err=True)
-        raise typer.Exit(code=2)
-    s = report.summary
-    typer.echo(
-        f"{', '.join(report.request_types) or '-'}: {report.proposals} proposals, {report.scored} "
-        f"scored, {report.pending} pending, {report.unscorable} unscorable; pass rate "
-        f"{s.pass_rate:.0%} (95% CI {s.wilson_low:.0%}-{s.wilson_high:.0%}), critical "
-        f"{s.critical_failures}, unsafe caught {len(report.unsafe_caught)}"
-    )
-    for g in report.groups:
-        typer.echo(f"  {g.id} ({g.count}) {g.label}")
+    run_workflow(workflow.shadow_report, out)
 
 
 @app.command()
@@ -916,58 +1379,6 @@ def demo(
 
     outcome = run_demo(out, seed=seed, n_tickets=n, cases=cases, workers=workers, say=typer.echo)
     raise typer.Exit(code=0 if all(code == 0 for code in outcome["exit_codes"]) else 1)
-
-
-KNOWLEDGE_HELP = (
-    "Dataset directory whose tickets the agent may search (behind the time-travel guard). "
-    "Default: the directory the test set was built from, when it still exists; 'none' to "
-    "attach nothing."
-)
-
-
-def knowledge_for(test_set: Any, option: Path | None) -> Any:
-    """The past-ticket corpus for a replay: the option, else the test set's data_dir."""
-    from replaybook.mock_env.knowledge import Corpus
-
-    if option is not None and str(option).lower() == "none":
-        return None
-    return Corpus.maybe(option if option is not None else test_set.data_dir)
-
-
-def make_agent(kind: str, flaws: str, command: str, request_type: str) -> Any:
-    """Build an agent under test from CLI options."""
-    if kind == "scripted":
-        from replaybook.agents.scripted import ScriptedAgent
-
-        return ScriptedAgent(flaws=[f for f in flaws.split(",") if f])
-    if kind == "skill":
-        from replaybook.agents.skill_agent import SkillAgent
-        from replaybook.llm.client import LLMClient
-
-        return SkillAgent(request_type, LLMClient())
-    if kind == "external":
-        import shlex
-
-        from replaybook.agents.external import ExternalAgent
-
-        if not command:
-            raise typer.BadParameter("--command is required for the external agent")
-        return ExternalAgent(shlex.split(command))
-    raise typer.BadParameter(f"unknown agent '{kind}'")
-
-
-def print_summary(run: Any) -> None:
-    s = run.summary
-    flaws = run.agent_config.get("flaws") or []
-    flaw_text = " flaws=" + ",".join(flaws) if flaws else ""
-    typer.echo(
-        f"{run.test_set_name} / {run.agent_config.get('agent')}{flaw_text}: "
-        f"{s.passed} pass, {s.failed} fail, {s.accepted} accepted, {s.errors} error of {s.total} "
-        f"(pass rate {s.pass_rate:.0%}, 95% CI {s.wilson_low:.0%}-{s.wilson_high:.0%}); "
-        f"critical {s.critical_failures}; gate {s.gate.upper()}"
-    )
-    if s.by_reason:
-        typer.echo("  failures by reason: " + ", ".join(f"{k} {v}" for k, v in s.by_reason.items()))
 
 
 if __name__ == "__main__":

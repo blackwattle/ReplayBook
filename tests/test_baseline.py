@@ -9,8 +9,9 @@ from replaybook.adapters.synthetic import load_platform, load_tickets
 from replaybook.agents.scripted import ScriptedAgent
 from replaybook.cli import app
 from replaybook.eval.accepted import AcceptedDifferences
-from replaybook.eval.baseline import approve, check, load_baseline
+from replaybook.eval.baseline import GOOD, approve, check, load_baseline
 from replaybook.eval.runner import compute_fingerprint, run_replay
+from replaybook.eval.scoring import ACCEPTABLE, FAILING
 from replaybook.eval.testset import build_test_set
 from replaybook.schema.testcase import TestSet as Suite
 
@@ -56,9 +57,9 @@ def test_approve_then_check_only_reports_differences(suite: Suite, tmp_path: Pat
     assert report.fingerprint_changed and report.reran and run is not None
     assert "agent config: flaws" in report.message
     assert report.regressions, "flaws must regress cases that passed in the baseline"
-    passed_before = {cid for cid, o in baseline.outcomes.items() if o["outcome"] == "pass"}
+    passed_before = {cid for cid, o in baseline.outcomes.items() if o["outcome"] in GOOD}
     assert all(c.case_id in passed_before for c in report.regressions)
-    assert all(c.after == "fail" for c in report.regressions)
+    assert all(c.after in FAILING for c in report.regressions)
     unchanged = (
         run.summary.total - len(report.regressions) - len(report.improvements) - len(report.changed)
     )
@@ -95,7 +96,7 @@ def test_improvements_and_accepted_count_as_good(suite: Suite, tmp_path: Path) -
     # Accepting the remaining failures by case makes a later check treat them as good.
     store = AcceptedDifferences()
     for r in run.results:
-        if r.outcome == "fail":
+        if r.outcome in ACCEPTABLE:
             store.add(
                 "case", r.case_id, "history predates the KRaft move", "ben", kind="outdated_history"
             )
@@ -108,7 +109,7 @@ def test_improvements_and_accepted_count_as_good(suite: Suite, tmp_path: Path) -
         force=True,
     )
     assert run2.summary.failed == 0 and run2.summary.accepted == sum(
-        r.outcome == "fail" for r in run.results
+        r.outcome in ACCEPTABLE for r in run.results
     )
 
 
@@ -204,6 +205,7 @@ def test_cli_approve_and_check_exit_codes(small_dataset: Path, tmp_path: Path) -
         ],
     )
     assert same.exit_code == 0 and "unchanged" in same.output
+    assert "baseline: passed " in same.output, "an unchanged check still states the result"
     flawed = runner.invoke(
         app,
         [

@@ -1,0 +1,59 @@
+# Gemini CLI as the agent under test, in non-interactive mode (gemini --prompt).
+#
+# Checked against the configuration guide (docs link below) on 2026-10-18. Flags and
+# settings keys change between versions: `replaybook launchers show gemini-cli` prints the
+# exact command and the settings file that would be written, so you can compare them with
+# `gemini --help`, and this file is yours to edit. Versions before the nested settings
+# schema used a top-level `excludeTools` key instead of `tools.exclude`.
+#
+# How it is kept inside the recording: the harness runs in an empty working directory whose
+# project settings file (.gemini/settings.json, written by Replaybook) lists the mock servers
+# as trusted (no per-call confirmation) and excludes every built-in tool; only those server
+# names are allowed, so servers from the user's own settings are not loaded.
+name: gemini-cli
+description: Gemini CLI non-interactive (gemini --prompt), MCP servers from project settings, built-in tools excluded
+docs: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/configuration.md
+checked: "2026-10-18"
+command:
+  - gemini
+  - --prompt
+  - "{prompt}"
+  - --yolo
+  - "{server_args}"
+mcp_config:
+  pass: file
+  format: json
+  filename: .gemini/settings.json
+  document:
+    mcpServers: "{servers}"
+    tools:
+      exclude: "{disabled_tools_list}"
+    general:
+      checkpointing:
+        enabled: false
+  server_entry:
+    command: "{command}"
+    args: "{args}"
+    trust: true
+  per_server_args:
+    - --allowed-mcp-server-names
+    - "{server}"
+prompt:
+  pass: argument
+disabled_tools:
+  - run_shell_command
+  - write_file
+  - replace
+  - read_file
+  - read_many_files
+  - list_directory
+  - glob
+  - search_file_content
+  - web_fetch
+  - google_web_search
+  - save_memory
+limitations: >
+  Project settings are merged with the user's own settings file; the allowed-server list
+  keeps other MCP servers out, but an extension installed for the user could still add
+  tools. Run it under a service account with no extensions.
+timeout_s: 900

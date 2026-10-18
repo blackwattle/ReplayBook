@@ -9,6 +9,7 @@ __pycache__/
 .replaybook/
 demo_out/
 runs/
+live/
 data/generated/
 *.egg-info/
 dist/

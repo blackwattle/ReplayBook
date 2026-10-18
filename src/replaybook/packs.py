@@ -4,7 +4,8 @@ The core never imports or names a specific tool (a test enforces it). A pack is 
 directory with:
 
 - pack.yaml      name, description and the request types it answers (label, keywords,
-                 components, the tools that identify the type, the sample skill)
+                 components, the tools that identify the type, the sample skill, and
+                 optional `escalation` overrides for the labelling rule in eval.labels)
 - rules.yaml     scoring rules: per-tool normalisation (family, target, which arguments
                  matter, defaults, unordered lists, case), unsafe tools with a severity,
                  and superseded tools with a plain-English label
@@ -15,7 +16,8 @@ directory with:
 - synth.py       optional REQUEST_TYPES, PROCEDURE_CHANGES, CHANGE_TICKETS and
                  platform_facts() for the synthetic generator
 - agent.py       optional PROCEDURES (scripted reference procedures), EXTRACTORS (rules
-                 that read expected actions from ticket text) and seed_inventory()
+                 that read expected actions from ticket text), ESCALATE_CUES (what in a
+                 ticket makes the scripted agent hand it back) and seed_inventory()
 - tools.json     for imported packs without a server.py: the MCP tool list a generic
                  recording mock is built from
 - skills/        sample SKILL.md files
@@ -78,6 +80,11 @@ class RequestTypeInfo:
     anchor_keywords: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
     skill: Path | None = None
+    # Overrides for the escalation labelling rule (eval.labels): the keywords that mark an
+    # approval, an escalation or a second opinion in a comment, and how many engineers
+    # commenting before the work make a discussion. None keeps the defaults.
+    escalation_keywords: tuple[str, ...] | None = None
+    discussion_engineers: int | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +128,11 @@ class Pack:
         for key, spec in (self.manifest.get("request_types") or {}).items():
             spec = spec or {}
             skill = spec.get("skill")
+            escalation = spec.get("escalation") or {}
+            if not isinstance(escalation, dict):
+                raise PackError(f"{self.path}: request type '{key}': escalation must be a mapping")
+            keywords = escalation.get("keywords")
+            engineers = escalation.get("discussion_engineers")
             found[key] = RequestTypeInfo(
                 key=key,
                 label=str(spec.get("label") or key),
@@ -132,6 +144,10 @@ class Pack:
                 anchor_keywords=tuple(spec.get("anchor_keywords") or ()),
                 tools=tuple(spec.get("tools") or ()),
                 skill=(self.path / skill) if skill else None,
+                escalation_keywords=tuple(str(k) for k in keywords)
+                if keywords is not None
+                else None,
+                discussion_engineers=int(engineers) if engineers is not None else None,
             )
         return found
 
@@ -280,6 +296,13 @@ class Pack:
             return dict(agent.seed_inventory(actions))
         return {}
 
+    def escalation_cues(self) -> dict[str, list[tuple[str, str]]]:
+        """request type -> [(regular expression, reason)]: what in a ticket's text makes the
+        scripted reference agent hand the ticket back for that type."""
+        agent = self.module("agent")
+        cues = getattr(agent, "ESCALATE_CUES", {}) if agent else {}
+        return {key: [(str(p), str(r)) for p, r in value] for key, value in cues.items()}
+
     def __repr__(self) -> str:
         return f"Pack({self.name!r}, {str(self.path)!r})"
 
@@ -386,6 +409,13 @@ class PackRegistry:
         for pack in self.packs:
             seed.update(pack.seed_inventory(actions))
         return seed
+
+    def escalation_cues(self) -> dict[str, list[tuple[str, str]]]:
+        merged: dict[str, list[tuple[str, str]]] = {}
+        for pack in self.packs:
+            for key, cues in pack.escalation_cues().items():
+                merged.setdefault(key, []).extend(cues)
+        return merged
 
     def summary(self) -> dict[str, Any]:
         return {

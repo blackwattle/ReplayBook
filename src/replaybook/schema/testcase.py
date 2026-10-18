@@ -13,6 +13,18 @@ from replaybook.mock_env.world import WorldState
 from replaybook.schema.ground_truth import ActionSpec
 
 ExpectationKind = Literal["actions", "ask"]
+# act: do the work, which includes asking the requester when information is missing.
+# escalate: the engineers' handling needed a person's judgement, so the agent should hand
+# the ticket back (ticket_escalate) without changing anything.
+ExpectedOutcome = Literal["act", "escalate"]
+# Fields added with the escalation outcome (spec v5) and their defaults. They enter the
+# test-set hash only when they differ from these, so a test set written before them keeps
+# its hash and the baselines approved on it.
+OUTCOME_FIELD_DEFAULTS: dict[str, Any] = {
+    "outcome": "act",
+    "outcome_reasons": [],
+    "outcome_source": "rule",
+}
 
 
 class Expectation(BaseModel):
@@ -28,6 +40,12 @@ class Expectation(BaseModel):
     # Expectations a model extracts from real data stay unverified until a person confirms.
     verified: bool = True
     notes: str | None = None
+    # The expected outcome, labelled by the rule in eval.labels (rule) or set by a person in
+    # a spot-check (manual). Rule labels stay unverified until `replaybook labels check`
+    # records a spot-check; outcome_reasons says what in the history made a case escalate.
+    outcome: ExpectedOutcome = "act"
+    outcome_reasons: list[str] = Field(default_factory=list)
+    outcome_source: Literal["rule", "manual"] = "rule"
 
 
 class TestCase(BaseModel):
@@ -62,7 +80,7 @@ class TestSet(BaseModel):
             {
                 "id": c.id,
                 "world": c.world.model_dump(mode="json"),
-                "expectation": c.expectation.model_dump(mode="json"),
+                "expectation": _hashed_expectation(c.expectation),
             }
             for c in self.cases
         ]
@@ -74,3 +92,11 @@ class TestSet(BaseModel):
             if case.id == case_id:
                 return case
         raise KeyError(case_id)
+
+
+def _hashed_expectation(expectation: Expectation) -> dict[str, Any]:
+    data = expectation.model_dump(mode="json")
+    for key, default in OUTCOME_FIELD_DEFAULTS.items():
+        if data.get(key) == default:
+            data.pop(key, None)
+    return data

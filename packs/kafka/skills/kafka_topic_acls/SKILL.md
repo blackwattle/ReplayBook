@@ -2,7 +2,18 @@
 name: kafka-topic-acls
 description: Create a Kafka topic and grant a service principal access to it.
 request_type: kafka_topic
-tools: kafka_cluster_info, kafka_describe_topic, kafka_create_topic, kafka_add_acl, ticket_ask_requester, ticket_comment
+tools: kafka_cluster_info, kafka_describe_topic, kafka_create_topic, kafka_add_acl, ticket_ask_requester, ticket_escalate, ticket_comment
+verify:
+  kafka_create_topic:
+    tool: kafka_describe_topic
+    args: {cluster: "{cluster}", topic: "{topic}"}
+    expect: {partitions: "{partitions}", retention_ms: "{retention_ms}"}
+    timeout_s: 30
+  kafka_add_acl:
+    tool: kafka_describe_topic
+    args: {cluster: "{cluster}", topic: "{topic}"}
+    expect: {acls: [{principal: "{principal}", operations: "{operations}"}]}
+    timeout_s: 30
 ---
 
 # Kafka topic + ACLs
@@ -22,6 +33,15 @@ a service account (principal) that will produce to or consume from it.
 
 If the topic name, partitions or principal is missing, ask the requester with
 `ticket_ask_requester` and stop. Do not pick a default.
+
+## When to hand back
+Call `ticket_escalate` with a one-line reason and stop, without changing anything, when
+the ticket needs a decision a person should make:
+- it says the change still needs an approval or sign-off;
+- it says it may clash with another team's work or needs a discussion first;
+- it asks for more than a new topic and its ACLs, such as changing an existing topic.
+
+Asking the requester is for missing details; handing back is for decisions.
 
 ## Procedure
 1. `kafka_cluster_info` for the cluster. All clusters run in KRaft mode; there is no

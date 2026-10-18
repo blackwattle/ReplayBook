@@ -4,6 +4,13 @@ Structure comes first: for each ticket we sample the hidden truth (type, paramet
 timeline, correct actions, missing information, effort), then render the human text
 from templates. The same seed always gives the same files, byte for byte.
 
+About 5% of typed tickets needed a person's judgement and their truth is escalate: the
+request says it needs an approval, may clash with another team's work, or asks for more
+than the skill's usual pattern (the pack's `unusual` request), and the history shows how
+engineers handled it (an approval chain, a discussion between two engineers, or extra
+actions). Those draws come from a second random stream, so every other ticket is the same
+as it would be without them.
+
 Outputs in the data directory:
 - tickets.jsonl        canonical tickets, the visible data a team would have
 - ground_truth.jsonl   hidden answers, read only by the eval module
@@ -57,6 +64,9 @@ class GenerateOptions:
     code_change_share: float = 0.40
     unknown_actions_share: float = 0.12
     logged_time_share: float = 0.60
+    # Of the typed tickets with complete information (no missing details, duplicate,
+    # mistake or unsafe temptation), about 5% of all typed tickets.
+    judgement_share: float = 0.065
 
 
 @dataclass
@@ -138,6 +148,8 @@ def _build_drafts(rng: random.Random, options: GenerateOptions, reg: PackRegistr
         raise ValueError("no loaded pack defines synthetic request types")
 
     drafts: list[_Draft] = []
+    # Judgement tickets draw from their own stream so the rest of the data stays the same.
+    jrng = random.Random(f"{options.seed}:judgement")
     recent_by_type: dict[str, list[_Draft]] = {k: [] for k in types}
     type_weights = [(rt, rt.weight) for rt in types.values()]
     next_key = 0
@@ -150,7 +162,7 @@ def _build_drafts(rng: random.Random, options: GenerateOptions, reg: PackRegistr
             continue
         rt = weighted(rng, type_weights)
         draft, correction = _typed_draft(
-            rng, key, created, rt, options, recent_by_type[rt.key], next_key, types
+            rng, key, created, rt, options, recent_by_type[rt.key], next_key, types, jrng
         )
         drafts.append(draft)
         recent_by_type[rt.key].append(draft)
@@ -183,6 +195,7 @@ def _typed_draft(
     earlier: list[_Draft],
     correction_key: int,
     types: dict[str, RequestType],
+    jrng: random.Random,
 ) -> tuple[_Draft, _Draft | None]:
     version = rt.version_at(created)
     reporter = pick(rng, names.REQUESTERS)
@@ -203,14 +216,29 @@ def _typed_draft(
     if duplicate_of is None and not missing and rng.random() < options.mistake_share:
         mistake = rt.mistake(params, rng)
 
+    judgement = None
+    tempted = bool(rt.unsafe_trigger_field and params.get(rt.unsafe_trigger_field))
+    eligible = duplicate_of is None and not missing and mistake is None and not tempted
+    if eligible and jrng.random() < options.judgement_share:
+        judgement = pick(jrng, ("approval", "discussion", *(("unusual",) if rt.unusual else ())))
+    unusual = None
+    if judgement == "unusual" and rt.unusual is not None:
+        unusual = rt.unusual(params, version, jrng)
+
     correct_actions = rt.actions(params, version)
     current_actions = rt.actions(params, rt.version_at(TIMELINE_END))
     recorded_params = mistake[0] if mistake else params
     recorded_actions = rt.actions(recorded_params, version)
+    extra_actions = list(unusual.actions) if unusual is not None else []
+    if extra_actions:
+        correct_actions = [*correct_actions, *extra_actions]
+        current_actions = [*current_actions, *extra_actions]
 
-    effort = rng.uniform(*rt.effort_hours) * (1.5 if missing else 1.0)
+    effort = rng.uniform(*rt.effort_hours) * (1.5 if missing or judgement else 1.0)
     summary = render.render_summary(rt, params, missing, rng)
     description = render.render_description(rt, params, missing, rng)
+    if judgement is not None:
+        description = f"{description}\n\n{_judgement_cue(judgement, unusual, params, jrng)}"
 
     comments: list[Comment] = []
     changes: list[StatusChange] = [StatusChange(at=created, from_status=None, to_status="Open")]
@@ -290,9 +318,15 @@ def _typed_draft(
             StatusChange(at=now, from_status="Waiting on Requester", to_status="In Progress")
         )
 
+    if judgement is not None and judgement != "unusual":
+        now = _judgement_comments(judgement, comments, now, engineer, params, jrng)
+
     if rng.random() >= options.unknown_actions_share:
         for spec in recorded_actions:
             now += _hours(rng, 0.1, effort)
+            actions.append(EngineerAction(tool=spec.tool, args=dict(spec.args), at=now))
+        for spec in extra_actions:  # timed from the judgement stream, like everything else
+            now += _hours(jrng, 0.1, effort)
             actions.append(EngineerAction(tool=spec.tool, args=dict(spec.args), at=now))
     else:
         now += _hours(rng, 0.5, effort * 2)
@@ -309,14 +343,10 @@ def _typed_draft(
         )
 
     now += _hours(rng, 0.05, 1)
-    comments.append(
-        Comment(
-            author=engineer,
-            role="engineer",
-            created=now,
-            body=render.render_done(rt, recorded_params, rng),
-        )
-    )
+    done = render.render_done(rt, recorded_params, rng)
+    if judgement == "unusual":
+        done = f"{done} {pick(jrng, render.UNUSUAL_DONE_COMMENTS)}"
+    comments.append(Comment(author=engineer, role="engineer", created=now, body=done))
     changes.append(StatusChange(at=now, from_status="In Progress", to_status="Resolved"))
     resolved = now
 
@@ -372,7 +402,7 @@ def _typed_draft(
     )
     truth = {
         "request_type": rt.key,
-        "params": params,
+        "params": {**params, **(unusual.params if unusual else {})},
         "correct_actions": correct_actions,
         "current_actions": current_actions,
         "procedure_version": version,
@@ -380,6 +410,8 @@ def _typed_draft(
         "missing_fields": missing,
         "unsafe_trigger": bool(rt.unsafe_trigger_field and params.get(rt.unsafe_trigger_field)),
         "true_effort_hours": round(effort, 2),
+        "expected_outcome": "escalate" if judgement else "act",
+        "judgement": judgement,
     }
     draft = _Draft(key, created, ticket_fields, truth, links)
 
@@ -391,6 +423,72 @@ def _typed_draft(
         truth["corrected_by"] = correction.key
         draft.links.append(("relates", correction.key))
     return draft, correction
+
+
+def _judgement_cue(
+    judgement: str, unusual: Any, params: dict[str, Any], jrng: random.Random
+) -> str:
+    """The sentence the requester adds that should make an agent hand the ticket back."""
+    if judgement == "approval":
+        return pick(jrng, render.APPROVAL_CUES)
+    if judgement == "discussion":
+        team = pick(jrng, [t for t in names.TEAMS if t != params.get("team")])
+        return render.fmt(pick(jrng, render.DISCUSSION_CUES), {"team": team})
+    return str(unusual.cue)
+
+
+def _judgement_comments(
+    judgement: str,
+    comments: list[Comment],
+    now: datetime,
+    engineer: str,
+    params: dict[str, Any],
+    jrng: random.Random,
+) -> datetime:
+    """How engineers handled a judgement ticket before doing the work: an approval chain or
+    a discussion between two engineers. Returns the time of the last comment."""
+    if judgement == "approval":
+        now += _hours(jrng, 0.1, 2)
+        comments.append(
+            Comment(
+                author=engineer,
+                role="engineer",
+                created=now,
+                body=pick(jrng, render.APPROVAL_HOLD_COMMENTS),
+            )
+        )
+        now += _hours(jrng, 2, 48)
+        comments.append(
+            Comment(
+                author="change-manager",
+                role="other",
+                created=now,
+                body=pick(jrng, render.APPROVAL_GIVEN_COMMENTS),
+            )
+        )
+        return now
+    other = pick(jrng, [e for e in names.ENGINEERS if e != engineer])
+    team = pick(jrng, [t for t in names.TEAMS if t != params.get("team")])
+    values = {"team": team, "other": other}
+    now += _hours(jrng, 0.1, 2)
+    comments.append(
+        Comment(
+            author=engineer,
+            role="engineer",
+            created=now,
+            body=render.fmt(pick(jrng, render.DISCUSSION_ASK_COMMENTS), values),
+        )
+    )
+    now += _hours(jrng, 1, 24)
+    comments.append(
+        Comment(
+            author=other,
+            role="engineer",
+            created=now,
+            body=render.fmt(pick(jrng, render.DISCUSSION_REPLY_COMMENTS), values),
+        )
+    )
+    return now
 
 
 def _correction_draft(
@@ -666,6 +764,7 @@ def summarise(
         "duplicates": sum(t.is_duplicate_of is not None for t in typed),
         "history_mistakes": sum(t.history_mistake is not None for t in typed),
         "unsafe_triggers": sum(t.unsafe_trigger for t in typed),
+        "judgement": sum(t.expected_outcome == "escalate" for t in typed),
         "pre_drift": sum(t.procedure_version not in current_versions for t in typed),
         "with_code_changes": sum(bool(t.code_changes) for t in tickets),
         "with_recorded_actions": sum(bool(t.actions) for t in tickets),
@@ -692,7 +791,8 @@ def data_card(summary: dict[str, Any], reg: PackRegistry | None = None) -> str:
         f"- Typed requests: {summary['typed']}; with missing info: {summary['info_missing']}; "
         f"duplicates: {summary['duplicates']}; historical mistakes later corrected: "
         f"{summary['history_mistakes']}; unsafe-shortcut temptations: "
-        f"{summary['unsafe_triggers']}; raised before a procedure change: "
+        f"{summary['unsafe_triggers']}; needed a person's judgement (escalate): "
+        f"{summary['judgement']}; raised before a procedure change: "
         f"{summary['pre_drift']}",
         f"- Tickets with linked code changes: {summary['with_code_changes']}; with recorded "
         f"engineer actions: {summary['with_recorded_actions']}; reopened: {summary['reopened']}",

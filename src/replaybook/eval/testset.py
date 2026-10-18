@@ -3,7 +3,8 @@
 Only visible data is used. The request type comes from the recorded engineer actions when
 there are any (an audit log is more reliable than prose) and from the text classifier
 otherwise. A ticket where the engineer asked the requester before doing anything, and the
-ticket waited on the requester, becomes an "ask" case: the agent should ask too.
+ticket waited on the requester, becomes an "ask" case: the agent should ask too. Every case
+also gets an expected outcome, act or escalate, from the labelling rule in eval.labels.
 """
 
 from __future__ import annotations
@@ -13,6 +14,13 @@ from typing import Any
 
 from replaybook.classify import classify
 from replaybook.eval.extract import Extractor
+from replaybook.eval.labels import (
+    RULE_PARTS,
+    UsualPattern,
+    judgement_findings,
+    label,
+    usual_pattern,
+)
 from replaybook.mock_env.world import WorldState
 from replaybook.packs import registry
 from replaybook.schema.ground_truth import ActionSpec
@@ -83,19 +91,25 @@ def build_test_set(
     extractor: Extractor | None = None,
 ) -> TestSet:
     """With an extractor, tickets without recorded actions (real history) get expectations
-    extracted from their text, labelled with the extractor's name and unverified."""
+    extracted from their text, labelled with the extractor's name and unverified. Every
+    case's expected outcome (act or escalate) comes from the rule in eval.labels, using the
+    type's usual pattern across all of its tickets."""
     by_id = {t.id: t for t in tickets}
     excluded: dict[str, int] = {}
-    candidates: list[tuple[Ticket, str, Expectation]] = []
+    of_type: list[tuple[Ticket, str]] = []
     for ticket in tickets:
         kind, how = type_of(ticket)
-        if kind != request_type:
-            continue
+        if kind == request_type:
+            of_type.append((ticket, how))
+    pattern = usual_pattern([t for t, _how in of_type])
+    candidates: list[tuple[Ticket, str, Expectation]] = []
+    rule_parts: dict[str, int] = {}
+    for ticket, how in of_type:
         reason = exclusion_reason(ticket, allow_unrecorded=extractor is not None)
         if reason:
             excluded[reason] = excluded.get(reason, 0) + 1
             continue
-        expectation = expectation_for(ticket, request_type, extractor)
+        expectation = expectation_for(ticket, request_type, extractor, pattern)
         if expectation is None:
             reason = "no extractable expectation"
             excluded[reason] = excluded.get(reason, 0) + 1
@@ -115,6 +129,8 @@ def build_test_set(
     chosen = candidates[:n]
     cases: list[TestCase] = []
     for ticket, _how, expectation in chosen:
+        for part in {p for p, _text in judgement_findings(ticket, request_type, pattern)}:
+            rule_parts[part] = rule_parts.get(part, 0) + 1
         cases.append(
             TestCase(
                 id=ticket.id,
@@ -151,6 +167,17 @@ def build_test_set(
                 "newest": max((c.created for c in cases), default=None),
             },
             "ask_cases": sum(c.expectation.kind == "ask" for c in cases),
+            "escalate_cases": sum(c.expectation.outcome == "escalate" for c in cases),
+            "escalation_rule": {
+                "labelled_by": "the rule in docs/replay-outcomes.md; unverified until a "
+                "person spot-checks the labels (replaybook labels check)",
+                "parts": {RULE_PARTS[k]: v for k, v in sorted(rule_parts.items())},
+                "usual_pattern": {
+                    "tickets_with_actions": pattern.tickets,
+                    "max_actions": pattern.max_actions,
+                    "used": pattern.reliable,
+                },
+            },
             "tagged": {
                 tag: sum(tag in c.tags for c in cases)
                 for tag in ("pre-procedure-change", "corrected-later")
@@ -161,6 +188,20 @@ def build_test_set(
 
 
 def expectation_for(
+    ticket: Ticket,
+    request_type: str,
+    extractor: Extractor | None,
+    pattern: UsualPattern | None = None,
+) -> Expectation | None:
+    """What engineers did, as an expectation, with its expected outcome labelled by the
+    rule (`pattern` is the type's usual pattern; without it that part of the rule is off)."""
+    expectation = _expectation(ticket, request_type, extractor)
+    if expectation is None:
+        return None
+    return label(expectation, ticket, request_type, pattern)
+
+
+def _expectation(
     ticket: Ticket, request_type: str, extractor: Extractor | None
 ) -> Expectation | None:
     if expects_ask(ticket):
@@ -182,6 +223,11 @@ def expectation_for(
         verified=False,
         notes=found.notes,
     )
+
+
+def pattern_for(tickets: list[Ticket], request_type: str) -> UsualPattern:
+    """The usual pattern of one request type across a history."""
+    return usual_pattern([t for t in tickets if type_of(t)[0] == request_type])
 
 
 def seed_inventory(actions: list[ActionSpec]) -> dict[str, Any]:

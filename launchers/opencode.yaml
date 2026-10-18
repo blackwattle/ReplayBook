@@ -1,0 +1,69 @@
+# OpenCode as the agent under test, in non-interactive mode (opencode run).
+#
+# Checked against the configuration docs (docs link below) on 2026-10-18. Keys change
+# between versions: `replaybook launchers show opencode` prints the exact command and the
+# config file that would be written, so you can compare them with the docs, and this file
+# is yours to edit.
+#
+# How it is kept inside the recording: OPENCODE_CONFIG points at a config file Replaybook
+# writes, which lists the mock servers as local MCP servers and switches every built-in
+# tool off (the `tools` map), with the permission rules set to deny as a second line.
+name: opencode
+description: OpenCode non-interactive (opencode run), MCP servers and tool switches from a config file named by OPENCODE_CONFIG
+docs: https://opencode.ai/docs/config/
+checked: "2026-10-18"
+command:
+  - opencode
+  - run
+  - "{prompt}"
+mcp_config:
+  pass: env
+  env_var: OPENCODE_CONFIG
+  format: json
+  filename: opencode.json
+  document:
+    $schema: https://opencode.ai/config.json
+    mcp: "{servers}"
+    tools:
+      bash: false
+      edit: false
+      write: false
+      read: false
+      glob: false
+      grep: false
+      list: false
+      patch: false
+      webfetch: false
+      websearch: false
+      todowrite: false
+      todoread: false
+      task: false
+    permission:
+      edit: deny
+      bash: deny
+      webfetch: deny
+  server_entry:
+    type: local
+    command: "{argv}"
+    enabled: true
+prompt:
+  pass: argument
+disabled_tools:
+  - bash
+  - edit
+  - write
+  - read
+  - glob
+  - grep
+  - list
+  - patch
+  - webfetch
+  - websearch
+  - todowrite
+  - todoread
+  - task
+limitations: >
+  The user's own config files are still read and merged; the file named by OPENCODE_CONFIG
+  only takes precedence. MCP servers configured there would still load. Run it under a
+  service account with no config of its own.
+timeout_s: 900

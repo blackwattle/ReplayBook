@@ -121,3 +121,13 @@ def kafka_topic(agent: Any, call: Any, text: str) -> tuple[str, str]:
 
 PROCEDURES = {"kafka_topic": kafka_topic}
 EXTRACTORS: dict[str, Any] = {}
+# What in a ticket makes the scripted agent hand it back, beyond the generic cues: the skill
+# leaves existing topics as they are, so changing one is a person's call.
+ESCALATE_CUES = {
+    "kafka_topic": [
+        (
+            r"partitions on (?:our|the) existing topic",
+            "the ticket also asks to change an existing topic, which the skill leaves alone",
+        )
+    ]
+}

@@ -8,7 +8,7 @@ from typing import Any
 from replaybook.schema.ground_truth import ActionSpec
 from replaybook.synth import names
 from replaybook.synth.names import pick
-from replaybook.synth.types import Mistake, Params, RequestType, current_version
+from replaybook.synth.types import Mistake, Params, RequestType, Unusual, current_version
 
 PACKAGE_TYPES = ("maven", "npm", "docker", "pypi", "generic", "helm")
 ARTIFACTORY_ACCESS = {
@@ -78,6 +78,29 @@ def _artifactory_mistake(p: Params, rng: random.Random) -> Mistake:
     return wrong, what
 
 
+def _artifactory_unusual(p: Params, _version: str, _rng: random.Random) -> Unusual:
+    """Also change an existing permission target, which the skill does not cover: engineers
+    checked with its owners first (artifactory_update_permission_target)."""
+    target = f"{p['team']}-shared-builds"
+    return Unusual(
+        cue=(
+            f"Please also add {p['group']} to our existing permission target {target} so the "
+            "team sees the shared builds."
+        ),
+        actions=[
+            ActionSpec(
+                tool="artifactory_update_permission_target",
+                args={
+                    "name": target,
+                    "repositories": [f"{p['team']}-shared-builds-local"],
+                    "groups": {p["group"]: ["read"]},
+                },
+            )
+        ],
+        params={"other_permission_target": target},
+    )
+
+
 ARTIFACTORY_REPO = RequestType(
     key="artifactory_repo",
     label="Artifactory repo + permissions",
@@ -116,6 +139,7 @@ ARTIFACTORY_REPO = RequestType(
     mistake=_artifactory_mistake,
     components=("artifactory",),
     procedure_version=current_version,
+    unusual=_artifactory_unusual,
 )
 
 REQUEST_TYPES = (ARTIFACTORY_REPO,)

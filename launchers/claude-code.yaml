@@ -1,0 +1,72 @@
+# Claude Code (Anthropic's agent CLI) as the agent under test, in non-interactive mode.
+#
+# Checked against `claude --help` of version 2.1.302 on 2026-10-18. Flags change between
+# versions: `replaybook launchers show claude-code` prints the exact command that would run
+# so you can compare it with `claude --help`, and this file is yours to edit.
+#
+# How it is kept inside the recording: the MCP servers come from the file Replaybook writes
+# (--mcp-config) and nothing else (--strict-mcp-config); every built-in tool is switched
+# off (--tools "" and, for older versions, --disallowedTools); --restricted also ignores the
+# user's, project's and local settings files (hooks, permissions) and refuses to run code;
+# the mock servers are pre-approved (--allowedTools mcp__<server>) and anything else that
+# would ask for permission is denied instead of waiting (--permission-prompts none).
+name: claude-code
+description: Claude Code in print mode (claude --print), MCP servers from a JSON file, built-in tools off
+docs: https://docs.claude.com/en/docs/claude-code/cli-reference
+checked: "2026-10-18"
+command:
+  - claude
+  - --print
+  - "{prompt}"
+  - --mcp-config
+  - "{mcp_config}"
+  - --strict-mcp-config
+  - --restricted
+  - --permission-prompts
+  - none
+  - --tools
+  - ""
+  - --disallowedTools
+  - "{disabled_tools}"
+  - --allowedTools
+  - "{servers}"
+  - --output-format
+  - text
+  - --max-turns
+  - "40"
+mcp_config:
+  pass: file
+  format: json
+  filename: mcp.json
+  document:
+    mcpServers: "{servers}"
+  server_entry:
+    command: "{command}"
+    args: "{args}"
+prompt:
+  pass: argument
+servers_pattern: "mcp__{server}"
+servers_join: ","
+disabled_tools:
+  - Bash
+  - BashOutput
+  - KillShell
+  - Edit
+  - MultiEdit
+  - Write
+  - NotebookEdit
+  - Read
+  - Glob
+  - Grep
+  - LS
+  - WebFetch
+  - WebSearch
+  - Task
+  - TodoWrite
+  - Skill
+  - ExitPlanMode
+limitations: >
+  Managed (organisation) settings still apply in restricted mode, so a managed hook or an
+  MCP server forced by policy would act outside the recording. The model is whatever the
+  harness is configured with; Replaybook cannot see it.
+timeout_s: 900

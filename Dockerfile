@@ -16,22 +16,30 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_NO_PROGRESS=1
 WORKDIR /app
+# Optional extras baked into the image, space-separated. The default image is offline-only;
+# the compose `models` profile builds with "jira models" so the LiteLLM agent can talk to the
+# local Ollama. (`uv sync` takes one --extra flag per extra; the loop expands the list.)
+ARG EXTRAS="jira"
 # Dependencies first, so they cache separately from the source.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project --extra jira
+RUN flags=""; for e in $EXTRAS; do flags="$flags --extra $e"; done \
+ && uv sync --frozen --no-dev --no-install-project $flags
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable --extra jira
+RUN flags=""; for e in $EXTRAS; do flags="$flags --extra $e"; done \
+ && uv sync --frozen --no-dev --no-editable $flags
 # The SBOM of exactly this lock file: add the sbom tool group, write it, take the group out.
-RUN uv sync --frozen --no-dev --no-editable --extra jira --group sbom \
+RUN flags=""; for e in $EXTRAS; do flags="$flags --extra $e"; done \
+ && uv sync --frozen --no-dev --no-editable $flags --group sbom \
  && uv run --frozen --no-sync replaybook sbom --out /app/sbom.cdx.json \
- && uv sync --frozen --no-dev --no-editable --extra jira
+ && uv sync --frozen --no-dev --no-editable $flags
 
 FROM python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
 LABEL org.opencontainers.image.title="Replaybook" \
       org.opencontainers.image.description="Tests ops agents against a team's own past tickets in a mock environment before they are trusted with production." \
       org.opencontainers.image.source="https://github.com/blackwattle/ReplayBook"
 # REPLAYBOOK_AIRGAPPED: refuse every connection except REPLAYBOOK_ALLOWED_HOSTS (empty here).
-# DO_NOT_TRACK, LITELLM_TELEMETRY and HF_HUB_OFFLINE are honoured by third-party libraries.
+# DO_NOT_TRACK, LITELLM_TELEMETRY and HF_HUB_OFFLINE are honoured by third-party libraries;
+# LITELLM_LOCAL_MODEL_COST_MAP stops LiteLLM fetching its price table at import.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -39,8 +47,10 @@ ENV PATH="/app/.venv/bin:$PATH" \
     REPLAYBOOK_ALLOWED_HOSTS="" \
     REPLAYBOOK_CACHE_DIR=/work/.replaybook/cache \
     REPLAYBOOK_PACKS=/app/packs \
+    REPLAYBOOK_LAUNCHERS=/app/launchers \
     DO_NOT_TRACK=1 \
     LITELLM_TELEMETRY=False \
+    LITELLM_LOCAL_MODEL_COST_MAP=True \
     HF_HUB_OFFLINE=1
 RUN useradd --create-home --uid 1000 --user-group replaybook \
  && mkdir -p /work && chown replaybook:replaybook /work
@@ -48,6 +58,8 @@ COPY --from=build --chown=replaybook:replaybook /app/.venv /app/.venv
 COPY --from=build /app/sbom.cdx.json /app/sbom.cdx.json
 # The example packs (all local mocks). Mount your own directory and point REPLAYBOOK_PACKS at it.
 COPY --chown=replaybook:replaybook packs /app/packs
+# The launchers for off-the-shelf agent harnesses (data, no harness is installed here).
+COPY --chown=replaybook:replaybook launchers /app/launchers
 USER replaybook
 WORKDIR /work
 ENTRYPOINT ["replaybook"]

@@ -7,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from replaybook.adapters.synthetic import load_platform, load_tickets
-from replaybook.agents.scripted import FLAWS, ScriptedAgent
+from replaybook.agents.scripted import DEMO_FLAWS, ScriptedAgent
 from replaybook.cli import app
 from replaybook.eval.accepted import AcceptedDifferences, apply_accepted, suggest
 from replaybook.eval.groups import group_failures
@@ -23,7 +23,9 @@ def flawed_kafka(small_dataset: Path, tmp_path_factory: pytest.TempPathFactory) 
     ts = build_test_set(
         load_tickets(small_dataset), load_platform(small_dataset), "kafka_topic", n=40
     )
-    return run_replay(ts, ScriptedAgent(flaws=FLAWS), tmp_path_factory.mktemp("flawed"), workers=3)
+    return run_replay(
+        ts, ScriptedAgent(flaws=DEMO_FLAWS), tmp_path_factory.mktemp("flawed"), workers=3
+    )
 
 
 @pytest.fixture(scope="module")
@@ -66,7 +68,7 @@ def test_fixed_run_failures_are_flagged_as_outdated_history(fixed_quota: RunResu
     assert all("predates a procedure change" in g.cause for g in groups if g.reason == "wrong_tool")
     suggestions = suggest(fixed_quota.results)
     assert {s["case_id"] for s in suggestions} == {
-        r.case_id for r in fixed_quota.results if r.outcome == "fail"
+        r.case_id for r in fixed_quota.results if r.outcome in ("mismatch", "partial")
     }
     assert all(
         s["kind"] == "outdated_history" for s in suggestions if "pre-procedure-change" in s["tags"]
@@ -74,7 +76,7 @@ def test_fixed_run_failures_are_flagged_as_outdated_history(fixed_quota: RunResu
 
 
 def test_accept_by_case_and_signature_with_expiry(fixed_quota: RunResult, tmp_path: Path) -> None:
-    failing = [r for r in fixed_quota.results if r.outcome == "fail"]
+    failing = [r for r in fixed_quota.results if r.outcome in ("mismatch", "partial")]
     assert len(failing) >= 2
     store = AcceptedDifferences()
     entry = store.add(
@@ -94,7 +96,7 @@ def test_accept_by_case_and_signature_with_expiry(fixed_quota: RunResult, tmp_pa
 
     later = apply_accepted(fixed_quota.results, store, today=date(2026, 12, 1))
     expired = next(r for r in later if r.case_id == failing[0].case_id)
-    assert expired.outcome == "fail" and "expired" in (expired.accepted_reason or "")
+    assert expired.outcome == failing[0].outcome and "expired" in (expired.accepted_reason or "")
 
     groups = group_failures(fixed_quota.results)
     store.add(
