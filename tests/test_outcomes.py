@@ -70,6 +70,7 @@ def _case(kind: str = "actions", outcome: str = "act", case_id: str = "T-1") -> 
             actions=EXPECTED if kind == "actions" else [],
             outcome=outcome,  # type: ignore[arg-type]
             outcome_reasons=WHY if outcome == "escalate" else [],
+            outcome_parts=["keywords"] if outcome == "escalate" else [],
         ),
     )
 
@@ -325,6 +326,56 @@ def test_spot_check_sample_size_and_block() -> None:
     assert not lab.label_status("ts", lab.test_set_labels(grown), store).checked
 
 
+def test_spot_check_that_changed_too_many_labels_does_not_count() -> None:
+    suite = _suite(40, escalate=20)
+    store = lab.LabelChecks()
+    day = timedelta(days=1)
+    good = summarise(_results({"match": 10}))
+
+    # Within the limit: one changed label in ten counts.
+    first = lab.suggest_sample(suite, store)
+    act = [c for c in first if suite.case(c).expectation.outcome == "act"]
+    suite, check1 = lab.record_check(suite, store, "ann", changes={act[0]: "escalate"}, now=NOW)
+    assert check1.counts and lab.change_causes(check1) == {"none": 1}
+    assert lab.label_status("ts", lab.test_set_labels(suite), store).checked
+
+    # Over the limit: three of ten. It does not count, and neither does the check before it.
+    second = lab.suggest_sample(suite, store)
+    assert not set(second) & set(first), "the next sample is a fresh one"
+    esc = [c for c in second if suite.case(c).expectation.outcome == "escalate"]
+    act = [c for c in second if c not in esc]
+    changes = {esc[0]: "act", esc[1]: "act", act[0]: "escalate"}
+    suite, check2 = lab.record_check(suite, store, "bob", changes=changes, now=NOW + day)
+    assert not check2.counts
+    assert {c.case_id: c.rule_parts for c in check2.changed if c.was == "escalate"} == {
+        esc[0]: ["keywords"],
+        esc[1]: ["keywords"],
+    }
+    assert suite.case(esc[0]).expectation.outcome_parts == [], "a person's label has no parts"
+    status = lab.label_status("ts", lab.test_set_labels(suite), store)
+    assert not status.checked and status.counted_ids == [] and status.check_ids[-1] == "LBL-2"
+    line = status.line()
+    assert "LBL-2 changed 3 of the 10 labels it covered, more than one in ten" in line
+    assert "behind the changed labels: keywords 2, none (the rule labelled it act) 1" in line
+    assert "tune `escalation:` in pack.yaml or relabel, then check a fresh sample" in line
+    gate = go_live_gate(good, status, 0.9)
+    assert not gate.passed and "LBL-2 changed 3 of the 10 labels" in gate.line()
+
+    # A fresh check after it counts.
+    third = lab.suggest_sample(suite, store)
+    assert not set(third) & (set(first) | set(second))
+    suite, check3 = lab.record_check(suite, store, "cy", now=NOW + 2 * day)
+    assert sorted(check3.labels) == third and check3.counts
+    status = lab.label_status("ts", lab.test_set_labels(suite), store)
+    assert status.checked and status.counted_ids == ["LBL-3"] and status.reviewers == ["cy"]
+    assert "LBL-2 changed 3 of 10 labels and does not count" in status.line()
+    assert go_live_gate(good, status, 0.9).passed
+
+    # The limit itself: one in ten is within it, more is over.
+    assert not lab.too_many_changed(1, 10) and lab.too_many_changed(2, 10)
+    assert not lab.too_many_changed(3, 30) and lab.too_many_changed(4, 30)
+
+
 def test_label_checks_round_trip(tmp_path: Path) -> None:
     store = lab.LabelChecks()
     lab.record_check(_suite(12), store, "ben")
@@ -373,6 +424,10 @@ def test_labelling_rule_parts() -> None:
     assert part == "keywords" and "eng-01" in why
     by_requester = _ticket([("r", "requester", "My manager approved this.")], usual)
     assert lab.judgement_reasons(by_requester, "kafka_topic") == [], "only the team's comments"
+    # The reporter is the requester on their own ticket, even where an adapter that learns
+    # its engineers across a project calls them an engineer.
+    own = _ticket([("r", "engineer", "CAB approved, go"), ("eng-01", "engineer", "on it")], usual)
+    assert lab.judgement_reasons(own, "kafka_topic") == []
     discussion = _ticket(
         [("eng-01", "engineer", "eng-02, can you look?"), ("eng-02", "engineer", "go ahead")],
         usual,
@@ -424,11 +479,16 @@ def test_builder_labels_agree_with_hidden_truth(small_dataset: Path) -> None:
     escalate = 0
     for request_type in ("kafka_topic", "artifactory_repo", "openstack_quota"):
         ts = build_test_set(tickets, platform, request_type, n=1000)
+        parts: dict[str, int] = {}
         for case in ts.cases:
-            assert case.expectation.outcome == truth[case.ticket_id].expected_outcome, case.id
-            assert bool(case.expectation.outcome_reasons) == (
-                case.expectation.outcome == "escalate"
-            )
+            exp = case.expectation
+            assert exp.outcome == truth[case.ticket_id].expected_outcome, case.id
+            escalate_case = exp.outcome == "escalate"
+            assert bool(exp.outcome_reasons) == bool(exp.outcome_parts) == escalate_case
+            assert set(exp.outcome_parts) <= set(lab.RULE_PARTS)
+            for part in exp.outcome_parts:
+                parts[lab.RULE_PARTS[part]] = parts.get(lab.RULE_PARTS[part], 0) + 1
+        assert ts.selection["escalation_rule"]["parts"] == dict(sorted(parts.items()))
         escalate += ts.selection["escalate_cases"]
         assert ts.selection["escalation_rule"]["usual_pattern"]["used"]
     assert escalate >= 3, "the synthetic history has judgement tickets"
@@ -551,7 +611,7 @@ def test_test_set_hash_ignores_default_outcome_fields() -> None:
     suite = _suite(3, escalate=0)
     plain = json.loads(suite.model_dump_json())
     for case in plain["cases"]:
-        for key in ("outcome", "outcome_reasons", "outcome_source"):
+        for key in ("outcome", "outcome_reasons", "outcome_parts", "outcome_source"):
             case["expectation"].pop(key)
     assert Suite.model_validate(plain).sha256() == suite.sha256()
     assert _suite(3, escalate=1).sha256() != suite.sha256()
@@ -667,3 +727,34 @@ def test_cli_labels_sample_check_and_report(small_dataset: Path, tmp_path: Path)
     )
     assert reported.exit_code == 0 and "labels spot-checked" in reported.output
     assert "missed_escalation" in reported.output, "the case relabelled escalate was acted on"
+
+    # A second check that changes two of its ten labels says at once that it does not count.
+    labels_args = ["--testset", str(ts_path), "--labels-file", str(labels_file)]
+    resample = runner.invoke(app, ["labels", "sample", *labels_args])
+    assert "(cases the 1 earlier check(s) covered come last)" in resample.output
+    cases = Suite.model_validate_json(ts_path.read_text(encoding="utf-8")).cases
+    flips = [
+        f"{c.id}={'act' if c.expectation.outcome == 'escalate' else 'escalate'}" for c in cases[:2]
+    ]
+    over = runner.invoke(
+        app,
+        [
+            "labels",
+            "check",
+            *labels_args,
+            "--reviewer",
+            "bob",
+            "--cases",
+            ",".join(c.id for c in cases[:10]),
+            "--set",
+            flips[0],
+            "--set",
+            flips[1],
+        ],
+    )
+    assert over.exit_code == 0, over.output
+    assert "NOTE labels spot-check LBL-2 changed 2 of the 10 labels" in over.output
+    again = runner.invoke(
+        app, ["report", str(run_dir), "--labels-file", str(labels_file), "--min-pass-rate", "0.5"]
+    )
+    assert "LBL-2 changed 2 of the 10 labels" in again.output and "does not count" in again.output

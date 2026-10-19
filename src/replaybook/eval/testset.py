@@ -14,13 +14,7 @@ from typing import Any
 
 from replaybook.classify import classify
 from replaybook.eval.extract import Extractor
-from replaybook.eval.labels import (
-    RULE_PARTS,
-    UsualPattern,
-    judgement_findings,
-    label,
-    usual_pattern,
-)
+from replaybook.eval.labels import RULE_PARTS, UsualPattern, label, usual_pattern
 from replaybook.mock_env.world import WorldState
 from replaybook.packs import registry
 from replaybook.schema.ground_truth import ActionSpec
@@ -48,7 +42,8 @@ def expects_ask(ticket: Ticket) -> bool:
     With an audit log the wait has to precede the first recorded action. Without one (real
     history) a wait is not enough: tickets also wait on the requester after the work, for
     "please verify" and "can this be closed", so an engineer must have asked a question
-    (a comment with a question mark) by the time the wait began.
+    (a comment with a question mark) by the time the wait began. The reporter's own
+    questions never count, whatever role an adapter gave them (eval.labels says why).
     """
     waited = [c.at for c in ticket.status_changes if c.to_status == WAITING_STATUS]
     if not waited:
@@ -57,7 +52,10 @@ def expects_ask(ticket: Ticket) -> bool:
     if ticket.actions:
         return first_wait < min(a.at for a in ticket.actions)
     return any(
-        c.role == "engineer" and "?" in c.body and c.created <= first_wait + ASK_GRACE
+        c.role == "engineer"
+        and c.author != ticket.reporter
+        and "?" in c.body
+        and c.created <= first_wait + ASK_GRACE
         for c in ticket.comments
     )
 
@@ -129,7 +127,7 @@ def build_test_set(
     chosen = candidates[:n]
     cases: list[TestCase] = []
     for ticket, _how, expectation in chosen:
-        for part in {p for p, _text in judgement_findings(ticket, request_type, pattern)}:
+        for part in expectation.outcome_parts:
             rule_parts[part] = rule_parts.get(part, 0) + 1
         cases.append(
             TestCase(

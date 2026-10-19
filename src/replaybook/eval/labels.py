@@ -19,11 +19,18 @@ The rule (docs/replay-outcomes.md) labels a case escalate when the history shows
   (`escalation: {discussion_engineers: N}` in pack.yaml changes the number, 0 turns it
   off).
 
+The requester is the ticket's reporter as well as anyone the adapter gave the requester
+role: an adapter that learns its engineers across a whole project (anyone who ever moved
+an issue) makes a reporter who closes their own tickets an "engineer" on their request.
+
 Rule labels stay unverified until a person spot-checks them: `replaybook labels check`
 records who checked which cases when, and which labels they changed, in
 `assurance/labels.yaml`. A spot-check covers at least 10 cases or 10% of the set,
 whichever is larger (all of a smaller set), and the go-live gate needs one that still
-covers that many of the set's current labels.
+covers that many of the set's current labels. A spot-check that changed more than one in
+ten of the labels it covered says the rule does not fit the set: it does not count, nor
+does any check before it, and the gate names the parts of the rule behind the changed
+labels until a fresh sample (cases no earlier check covered come first) is checked.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -183,9 +191,8 @@ def judgement_findings(
             )
 
     comments = sorted(ticket.comments, key=lambda c: c.created)
-    for comment in comments:
-        if comment.role == "requester":
-            continue
+    team = [c for c in comments if c.role != "requester" and c.author != ticket.reporter]
+    for comment in team:
         word = _first_keyword(keywords, comment.body)
         if word:
             snippet = " ".join(comment.body.split())
@@ -201,7 +208,7 @@ def judgement_findings(
         else:
             done_at = ticket.resolved or max((c.created for c in comments), default=ticket.created)
         engineers: list[str] = []
-        for comment in comments:
+        for comment in team:
             if comment.role == "engineer" and comment.created <= done_at:
                 if comment.author not in engineers:
                     engineers.append(comment.author)
@@ -223,12 +230,15 @@ def label(
     pattern: UsualPattern | None = None,
     packs: PackRegistry | None = None,
 ) -> Expectation:
-    """The expectation with its expected outcome set by the rule."""
-    reasons = judgement_reasons(ticket, request_type, pattern, packs)
+    """The expectation with its expected outcome set by the rule, the reasons it found and
+    the parts of the rule they came from."""
+    findings = judgement_findings(ticket, request_type, pattern, packs)
+    parts = {part for part, _text in findings}
     return expectation.model_copy(
         update={
-            "outcome": "escalate" if reasons else "act",
-            "outcome_reasons": reasons,
+            "outcome": "escalate" if findings else "act",
+            "outcome_reasons": [text for _part, text in findings],
+            "outcome_parts": [part for part in RULE_PARTS if part in parts],
             "outcome_source": "rule",
         }
     )
@@ -249,6 +259,12 @@ def required_sample(cases: int) -> int:
     return min(cases, max(MIN_SAMPLE, math.ceil(SAMPLE_SHARE * cases)))
 
 
+def too_many_changed(changed: int, covered: int) -> bool:
+    """A spot-check changed more than one in ten of the labels it covered: the rule does
+    not fit the set, so the check does not count for the go-live gate."""
+    return changed * 10 > covered
+
+
 class LabelChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -256,6 +272,10 @@ class LabelChange(BaseModel):
     was: ExpectedOutcome
     now: ExpectedOutcome
     note: str = ""
+    # Where the old label came from: the rule, with the parts of it that labelled the case
+    # escalate (none when the rule labelled it act), or an earlier spot-check.
+    was_source: Literal["rule", "manual"] = "rule"
+    rule_parts: list[str] = Field(default_factory=list)
 
 
 class LabelCheck(BaseModel):
@@ -274,6 +294,11 @@ class LabelCheck(BaseModel):
     changed: list[LabelChange] = Field(default_factory=list)
     # The test set's hash after the changes were applied.
     test_set_sha256: str = ""
+
+    @property
+    def counts(self) -> bool:
+        """False when the check changed more than one in ten of the labels it covered."""
+        return not too_many_changed(len(self.changed), len(self.labels))
 
 
 class LabelChecks(BaseModel):
@@ -306,13 +331,19 @@ class LabelChecks(BaseModel):
         return sorted((c for c in self.checks if c.test_set == name), key=lambda c: c.checked_at)
 
 
-def suggest_sample(test_set: TestSet) -> list[str]:
+def suggest_sample(test_set: TestSet, store: LabelChecks | None = None) -> list[str]:
     """The cases to spot-check: the required number, half of them (or as many as there
     are) escalate cases, the rest act cases, in an order fixed by the set's name and the
-    case ids so that the same set always gives the same sample."""
+    case ids so that the same set always gives the same sample. With the store, cases an
+    earlier check of the set covered come last, so a new check gets a fresh sample where
+    the set has enough cases."""
+    checked: set[str] = set()
+    for earlier in store.for_set(test_set.name) if store is not None else []:
+        checked.update(earlier.labels)
 
-    def order(case_id: str) -> str:
-        return hashlib.sha256(f"{test_set.name}:{case_id}".encode()).hexdigest()
+    def order(case_id: str) -> tuple[bool, str]:
+        digest = hashlib.sha256(f"{test_set.name}:{case_id}".encode()).hexdigest()
+        return case_id in checked, digest
 
     escalate = sorted(
         (c.id for c in test_set.cases if c.expectation.outcome == "escalate"), key=order
@@ -341,7 +372,7 @@ def record_check(
         raise ValueError("a spot-check needs the name of the person who did it (--reviewer)")
     changes = dict(changes or {})
     by_id = {c.id: c for c in test_set.cases}
-    ids = list(dict.fromkeys(case_ids or suggest_sample(test_set)))
+    ids = list(dict.fromkeys(case_ids or suggest_sample(test_set, store)))
     unknown = sorted({*ids, *changes} - set(by_id))
     if unknown:
         raise ValueError(f"not in test set {test_set.name}: {', '.join(unknown)}")
@@ -362,15 +393,28 @@ def record_check(
     cases = []
     for case in test_set.cases:
         new = changes.get(case.id)
-        if new is not None and new != case.expectation.outcome:
+        old = case.expectation
+        if new is not None and new != old.outcome:
             text = note or f"set to {new} by {reviewer} in spot-check {entry_id}"
             changed.append(
                 LabelChange.model_validate(
-                    {"case_id": case.id, "was": case.expectation.outcome, "now": new, "note": text}
+                    {
+                        "case_id": case.id,
+                        "was": old.outcome,
+                        "now": new,
+                        "note": text,
+                        "was_source": old.outcome_source,
+                        "rule_parts": old.outcome_parts if old.outcome_source == "rule" else [],
+                    }
                 )
             )
-            expectation = case.expectation.model_copy(
-                update={"outcome": new, "outcome_source": "manual", "outcome_reasons": [text]}
+            expectation = old.model_copy(
+                update={
+                    "outcome": new,
+                    "outcome_source": "manual",
+                    "outcome_reasons": [text],
+                    "outcome_parts": [],
+                }
             )
             case = case.model_copy(update={"expectation": expectation})
         cases.append(case)
@@ -395,6 +439,62 @@ def record_check(
     return updated, entry
 
 
+# What can be behind a changed label besides a part of the rule (RULE_PARTS).
+OTHER_CAUSES: dict[str, str] = {
+    "none": "none (the rule labelled it act)",
+    "spot-check": "an earlier spot-check",
+    "not recorded": "not recorded (the set predates them)",
+}
+
+
+def change_causes(check: LabelCheck) -> dict[str, int]:
+    """For each label a check changed, what gave the old label: the parts of the rule that
+    labelled the case escalate, `none` when the rule labelled it act, `spot-check` when an
+    earlier check set it. A case escalated by two parts counts for both."""
+    counts: dict[str, int] = {}
+    for change in check.changed:
+        if change.was_source == "manual":
+            causes = ["spot-check"]
+        elif change.was == "act":
+            causes = ["none"]
+        else:
+            causes = change.rule_parts or ["not recorded"]
+        for cause in causes:
+            counts[cause] = counts.get(cause, 0) + 1
+    return counts
+
+
+class UncountedCheck(BaseModel):
+    """A spot-check that changed more than one in ten of the labels it covered."""
+
+    id: str
+    changed: int
+    covered: int
+    # change_causes() of the check: rule part (or other cause) -> changed labels
+    causes: dict[str, int] = Field(default_factory=dict)
+
+    def line(self) -> str:
+        named = [(key, OTHER_CAUSES.get(key, key)) for key in [*RULE_PARTS, *OTHER_CAUSES]]
+        causes = ", ".join(
+            f"{name} {self.causes[key]}" for key, name in named if key in self.causes
+        )
+        return (
+            f"labels spot-check {self.id} changed {self.changed} of the {self.covered} labels it "
+            f"covered, more than one in ten, so it does not count (parts of the labelling rule "
+            f"behind the changed labels: {causes}); tune `escalation:` in pack.yaml or relabel, "
+            f"then check a fresh sample (`replaybook labels sample`)"
+        )
+
+
+def uncounted(check: LabelCheck) -> UncountedCheck:
+    return UncountedCheck(
+        id=check.id,
+        changed=len(check.changed),
+        covered=len(check.labels),
+        causes=change_causes(check),
+    )
+
+
 class LabelStatus(BaseModel):
     """Whether a set's current labels are covered by spot-checks, for the go-live gate."""
 
@@ -403,18 +503,31 @@ class LabelStatus(BaseModel):
     required: int = 0
     covered: int = 0
     escalate_cases: int = 0
+    # Reviewers and date of the checks that count.
     reviewers: list[str] = Field(default_factory=list)
     last_checked_at: datetime | None = None
+    # Every check of the set, and those that count: the checks after the last one that
+    # changed more than one in ten of its labels (`not_counted`), or all of them.
     check_ids: list[str] = Field(default_factory=list)
+    counted_ids: list[str] = Field(default_factory=list)
     changed: int = 0
+    not_counted: UncountedCheck | None = None
 
     def line(self) -> str:
         if self.checked:
             when = self.last_checked_at.date().isoformat() if self.last_checked_at else "-"
+            earlier = ""
+            if self.not_counted is not None:
+                earlier = (
+                    f"; {self.not_counted.id} changed {self.not_counted.changed} of "
+                    f"{self.not_counted.covered} labels and does not count"
+                )
             return (
                 f"labels spot-checked ({self.covered} of {self.cases} cases by "
-                f"{', '.join(self.reviewers)}, last on {when})"
+                f"{', '.join(self.reviewers)}, last on {when}{earlier})"
             )
+        if self.not_counted is not None and not self.counted_ids:
+            return self.not_counted.line()
         if not self.check_ids:
             return (
                 f"labels not spot-checked: `replaybook labels check` needs at least "
@@ -428,10 +541,14 @@ class LabelStatus(BaseModel):
 
 def label_status(test_set: str, labels: dict[str, str], store: LabelChecks) -> LabelStatus:
     """`labels` maps each current case id to its expected outcome. A checked case counts
-    only while it still carries the label the reviewer confirmed or set."""
+    only while it still carries the label the reviewer confirmed or set. A check that
+    changed more than one in ten of its labels does not count, nor does any check before
+    it: the rule needed tuning, so only a fresh check after it shows the labels hold."""
     checks = store.for_set(test_set)
+    last_bad = max((i for i, c in enumerate(checks) if not c.counts), default=None)
+    counted = checks if last_bad is None else checks[last_bad + 1 :]
     confirmed: dict[str, str] = {}
-    for check in checks:
+    for check in counted:
         confirmed.update(check.labels)
     covered = sum(1 for case_id, value in labels.items() if confirmed.get(case_id) == value)
     need = required_sample(len(labels))
@@ -441,10 +558,12 @@ def label_status(test_set: str, labels: dict[str, str], store: LabelChecks) -> L
         required=need,
         covered=covered,
         escalate_cases=sum(value == "escalate" for value in labels.values()),
-        reviewers=sorted({c.reviewer for c in checks}),
-        last_checked_at=checks[-1].checked_at if checks else None,
+        reviewers=sorted({c.reviewer for c in counted}),
+        last_checked_at=counted[-1].checked_at if counted else None,
         check_ids=[c.id for c in checks],
+        counted_ids=[c.id for c in counted],
         changed=sum(len(c.changed) for c in checks),
+        not_counted=uncounted(checks[last_bad]) if last_bad is not None else None,
     )
 
 

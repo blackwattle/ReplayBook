@@ -5,13 +5,14 @@ names of the arguments that differed. Argument values are deliberately left out,
 tickets with forty different topic names but the same mistake land in one group.
 
 The cause text comes from rules offline. With a model available, `describe_with_model`
-can rewrite it; the rule text is always kept as the fallback.
+(`replaybook groups --model`) has the fast model rewrite it; the rule text stays when the
+model is offline or at the spend cap, and each group says which wrote its cause.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -46,6 +47,11 @@ class FailureGroup(BaseModel):
     # Every member carries a visible hint that history, not the agent, is out of date.
     likely_history_outdated: bool = False
     examples: list[Example] = Field(default_factory=list)
+    # Who wrote `cause`: the rules, or the model named in cause_model. cause_note says why
+    # the rule text was kept when a model was asked.
+    cause_source: Literal["rules", "model"] = "rules"
+    cause_model: str | None = None
+    cause_note: str = ""
 
 
 def group_failures(results: list[CaseResult]) -> list[FailureGroup]:
@@ -223,8 +229,15 @@ def describe(
 def describe_with_model(
     groups: list[FailureGroup], llm: Any, tier: str = "fast"
 ) -> list[FailureGroup]:
-    """Ask a model for a tighter cause paragraph; keep the rule text when offline."""
+    """Ask a model for a tighter cause paragraph per group. The rule text stays when the
+    model cannot be called (offline, at the spend cap, a failed call) or returns nothing;
+    each group records which wrote its cause and, for the rule text, why. Once the client
+    has gone offline the remaining groups are not sent."""
+    offline: str | None = None
     for group in groups:
+        if offline is not None:
+            group.cause_note = offline
+            continue
         prompt = (
             "You review failures of an operations agent. In two or three plain sentences, "
             "explain the likely cause and what to fix. Do not speculate beyond the evidence.\n\n"
@@ -233,8 +246,27 @@ def describe_with_model(
         )
         try:
             response = llm.complete([{"role": "user", "content": prompt}], tier=tier)
-        except ModelUnavailable:
-            return groups
-        if response.text:
-            group.cause = response.text.strip()
+        except ModelUnavailable as exc:
+            group.cause_note = f"model unavailable: {exc}"
+            if llm.offline:
+                offline = group.cause_note
+            continue
+        text = (response.text or "").strip()
+        if not text:
+            group.cause_note = "the model returned no text"
+            continue
+        group.cause = text
+        group.cause_source = "model"
+        group.cause_model = response.model or llm.model_for(tier)
     return groups
+
+
+def cause_line(groups: list[FailureGroup]) -> str:
+    """Who wrote the causes: '2 by <model>, 1 from the rules (why)'."""
+    by_model = Counter(g.cause_model or "a model" for g in groups if g.cause_source == "model")
+    parts = [f"{n} by {model}" for model, n in sorted(by_model.items())]
+    kept = [g for g in groups if g.cause_source == "rules"]
+    if kept:
+        why = sorted({g.cause_note for g in kept if g.cause_note})
+        parts.append(f"{len(kept)} from the rules" + (f" ({'; '.join(why)})" if why else ""))
+    return "causes: " + ", ".join(parts)

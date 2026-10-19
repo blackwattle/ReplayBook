@@ -23,6 +23,7 @@ ExpectedOutcome = Literal["act", "escalate"]
 OUTCOME_FIELD_DEFAULTS: dict[str, Any] = {
     "outcome": "act",
     "outcome_reasons": [],
+    "outcome_parts": [],
     "outcome_source": "rule",
 }
 
@@ -42,9 +43,11 @@ class Expectation(BaseModel):
     notes: str | None = None
     # The expected outcome, labelled by the rule in eval.labels (rule) or set by a person in
     # a spot-check (manual). Rule labels stay unverified until `replaybook labels check`
-    # records a spot-check; outcome_reasons says what in the history made a case escalate.
+    # records a spot-check; outcome_reasons says what in the history made a case escalate,
+    # and outcome_parts which parts of the rule found it (eval.labels.RULE_PARTS).
     outcome: ExpectedOutcome = "act"
     outcome_reasons: list[str] = Field(default_factory=list)
+    outcome_parts: list[str] = Field(default_factory=list)
     outcome_source: Literal["rule", "manual"] = "rule"
 
 

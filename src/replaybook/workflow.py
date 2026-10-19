@@ -301,9 +301,12 @@ def report(
     }
 
 
-def groups(run_dir: Path) -> dict[str, Any]:
-    """Group a run's failures by cause, with two examples each, and save groups.json."""
-    from replaybook.eval.groups import group_failures
+def groups(run_dir: Path, model: bool = False, llm: Any = None) -> dict[str, Any]:
+    """Group a run's failures by cause, with two examples each, and save groups.json. With
+    `model`, the fast model writes each group's cause; the rule text stays when the model is
+    offline or at the spend cap, and the result says which wrote each cause. `llm` replaces
+    the model client (tests pass a fake)."""
+    from replaybook.eval.groups import cause_line, describe_with_model, group_failures
     from replaybook.eval.runner import load_run
 
     run_dir = Path(run_dir)
@@ -311,12 +314,20 @@ def groups(run_dir: Path) -> dict[str, Any]:
         raise WorkflowError(f"no results.json in {run_dir}; run `replaybook replay` first")
     run = load_run(run_dir)
     found = group_failures(run.results)
+    message = f"{len(found)} failure group(s) in {run.run_id}" if found else "No failures to group."
+    if model and found:
+        if llm is None:
+            from replaybook.llm.client import LLMClient
+
+            llm = LLMClient()
+        describe_with_model(found, llm, tier="fast")
+        message += f"; {cause_line(found)}"
+        if hasattr(llm, "spend_line"):
+            message += f"; {llm.spend_line()}"
     path = run_dir / "groups.json"
     path.write_text("[" + ",\n".join(g.model_dump_json() for g in found) + "]", encoding="utf-8")
     return {
-        "message": f"{len(found)} failure group(s) in {run.run_id} -> {path}"
-        if found
-        else "No failures to group.",
+        "message": f"{message} -> {path}" if found else message,
         "run_dir": str(run_dir),
         "path": str(path),
         "groups": [
@@ -325,6 +336,9 @@ def groups(run_dir: Path) -> dict[str, Any]:
                 "count": g.count,
                 "label": g.label,
                 "cause": g.cause,
+                "cause_source": g.cause_source,
+                "cause_model": g.cause_model,
+                "cause_note": g.cause_note,
                 "reason": g.reason,
                 "severity": g.severity,
                 "likely_history_outdated": g.likely_history_outdated,
@@ -695,24 +709,31 @@ def packs() -> dict[str, Any]:
     }
 
 
-def labels_sample(testset: Path, out: Path | None = None) -> dict[str, Any]:
+def labels_sample(
+    testset: Path, out: Path | None = None, labels_file: Path = DEFAULT_LABELS
+) -> dict[str, Any]:
     """The cases a person should spot-check on a test set (at least 10 or 10%, whichever is
-    larger), with a Markdown review sheet. Read-only: recording the check is
-    `replaybook labels check`, by a person."""
+    larger), with a Markdown review sheet. Cases an earlier check in `labels_file` covered
+    come last, so the sample is a fresh one where the set allows. Read-only: recording the
+    check is `replaybook labels check`, by a person."""
+    from replaybook.eval.golive import load_label_checks
     from replaybook.eval.labels import required_sample, review_sheet, suggest_sample
 
     test_set = load_test_set(testset)
-    ids = suggest_sample(test_set)
+    store = load_label_checks(Path(labels_file))
+    ids = suggest_sample(test_set, store)
     sheet = review_sheet(test_set, ids)
     if out is not None:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_text(sheet, encoding="utf-8")
     by_id = {c.id: c for c in test_set.cases}
+    earlier = store.for_set(test_set.name)
     return {
         "message": (
             f"{test_set.name}: check these {len(ids)} of {len(test_set.cases)} cases "
             f"(at least {required_sample(len(test_set.cases))}): {', '.join(ids)}"
             + (f" -> {out}" if out is not None else "")
+            + (f" (cases the {len(earlier)} earlier check(s) covered come last)" if earlier else "")
         ),
         "test_set": test_set.name,
         "cases": [
@@ -720,6 +741,7 @@ def labels_sample(testset: Path, out: Path | None = None) -> dict[str, Any]:
                 "case_id": i,
                 "label": by_id[i].expectation.outcome,
                 "reasons": list(by_id[i].expectation.outcome_reasons),
+                "rule_parts": list(by_id[i].expectation.outcome_parts),
                 "summary": by_id[i].summary,
             }
             for i in ids

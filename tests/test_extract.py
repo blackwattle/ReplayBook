@@ -153,6 +153,23 @@ def test_builder_extracts_unverified_expectations_only_without_recorded_actions(
         quiet, platform, "dns_change", n=10, source="public_jira", extractor=RuleExtractor()
     )
     assert verify_loop.cases[0].expectation.kind == "actions"
+    # Nor is a question the reporter asked on their own ticket, though an adapter that learns
+    # its engineers across the project calls them an engineer.
+    own_question = [
+        t.model_copy(
+            update={
+                "comments": [
+                    c.model_copy(update={"author": t.reporter}) if c.role == "engineer" else c
+                    for c in t.comments
+                ]
+            }
+        )
+        for t in tickets
+    ]
+    by_reporter = build_test_set(
+        own_question, platform, "dns_change", n=10, source="public_jira", extractor=RuleExtractor()
+    )
+    assert by_reporter.cases[0].expectation.kind == "actions"
     cert = build_test_set(
         tickets, platform, "cert_renewal", n=10, source="public_jira", extractor=RuleExtractor()
     )

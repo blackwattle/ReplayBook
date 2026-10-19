@@ -174,3 +174,72 @@ The findings above stand. What changed underneath them:
 - An agent replayed against INFRA can now search earlier INFRA tickets through the
   knowledge tools, behind the time-travel guard; the "empty world" problem is unchanged
   and still wants a CMDB export.
+
+## The escalation labels on real tickets (milestone 30, 2026-10-19)
+
+Every case is labelled act or escalate by a rule (`docs/replay-outcomes.md`) that was built
+on synthetic history, where it agrees with the hidden truth on every case. To see how it
+behaves on real comment threads, INFRA was exported again on the dev VM and the same seven
+test sets were rebuilt (40 newest eligible tickets per type, `--extract rules`).
+`selection.escalation_rule` in each set counts the cases each part of the rule labelled:
+
+| Type | Cases | Ask cases | Escalate | Discussion part | Keyword part | Escalate in the first build |
+|---|---|---|---|---|---|---|
+| dns_change | 40 | 11 | 11 | 10 | 2 | 23 of 40 |
+| cert_renewal | 40 | 11 | 10 | 10 | 1 | 24 of 40 |
+| group_access | 16 | 13 | 7 | 7 | 0 | 14 of 16 |
+| ci_fix | 40 | 33 | 17 | 16 | 1 | 38 of 40 |
+| artifactory_repo | 40 | 40 | 22 | 22 | 2 | 34 of 40 |
+| kafka_topic | 14 | 14 | 10 | 10 | 1 | 13 of 15 |
+| openstack_quota | 2 | 2 | 2 | 2 | 0 | 3 of 3 |
+| **Total** | **192** | **124** | **79 (41%)** | **77** | **7** | **149 of 194 (77%)** |
+
+A case can meet both parts. The other two parts never fired: real history has no recorded
+actions, so there is no tool outside the skill to see and no usual pattern to compare with
+(`usual_pattern.used` is false for every set). On real tickets only the comments decide.
+
+**What broke, and what was changed:**
+
+- **The reporter counted as an engineer.** The first build labelled 149 of 194 cases
+  escalate, 148 of them through the discussion part, and in 132 of those one of the two
+  "engineers" was the ticket's own reporter. The Jira adapters learn their engineers across
+  the whole project (anyone who was ever an assignee or moved an issue), and most INFRA
+  reporters have closed or reopened a ticket somewhere, so on their own request they
+  counted as engineers. The documented rule already said the requester never counts; the
+  code went by the adapter's role. The same slip made ask cases: 31 of the first build's
+  133 rested only on a question the reporter asked on their own ticket ("Should I close
+  this issue now?"). The labelling rule and the ask rule now both skip the ticket's
+  reporter. That is a change to the core, which names no system, so the adapters stay as
+  they were. Synthetic labels and ask cases did not move (synthetic reporters are
+  requesters, and synthetic ask cases are read from the audit log). Because fewer tickets
+  now count as asks, some sets drew different tickets; the ask-case counts in the table at
+  the top of this page predate the fix.
+- **Two engineers is too low for a busy public queue.** In a sample of 12 discussion
+  cases (three each of DNS, certificates, repositories and groups), three were clear
+  judgement calls: a podling name that needed a brand approval, an engineer asking
+  colleagues "any ideas here?", a migration "evaluated on a case by case basis". Three
+  were arguable. Six were routine threads: a project member chiming in, a colleague
+  finishing the work, an automated "Pending Closed" reminder posted from an account the
+  export takes for a person. On INFRA a second commenter is normal, not a sign of
+  judgement. Three engineers would have labelled 27 of the 192 cases (14%), four 11, and
+  three is closer to what the sample suggests. A team with threads like these sets
+  `escalation: {discussion_engineers: 3}` for its request types in `pack.yaml`. The default
+  stays at two, which matches the synthetic history; only a team's own queue can say what
+  fits, and the spot-check is where that shows.
+- **The keywords mostly fit.** Seven cases: "approved" three times, "approval",
+  "approve", "escalation" and "sign-off" once each. Six show an approval chain or a policy
+  question: "Does this need board escalation?", "we'd need sign-off by [~gstein] to create
+  role accounts", "can you link an approval thread from a geode list?", "This doesn't seem
+  to be an approved release process". In the seventh, "it got approved" was a vendor's
+  routine approval of renewed signing credentials. Before the ask fix the sets also held
+  "Approved, please test", where approving a GitHub Action was the answer to the request,
+  so the list misfires where approving is the work itself.
+- **The spot-check limit would have caught the first build.** These labels stay unverified
+  until a person checks a sample. On the first build a reviewer would have changed far more
+  than one label in ten, so under the limit added in this milestone the check would not
+  have counted until the rule was fixed or tuned, and the gate line would have named the
+  discussion part as the cause.
+
+The export, the three generations of test sets (`testsets-reporter-counted/`,
+`testsets-labels-fixed/` and `testsets/`) and the per-case measurements (`labels*.json`)
+are under `/srv/replaybook-out/m30` on the dev VM.

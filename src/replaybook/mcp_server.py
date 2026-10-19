@@ -163,17 +163,21 @@ def build_server() -> MCPServer:
         return _guard(workflow.skills_validate, request_type, None)
 
     @server.tool(annotations=READS)
-    def replaybook_labels_sample(testset: str) -> dict[str, Any]:
+    def replaybook_labels_sample(
+        testset: str, labels_file: str = str(DEFAULT_LABELS)
+    ) -> dict[str, Any]:
         """The cases of a test set a person should spot-check (at least 10 or 10%), with each
-        expected outcome (act or escalate) and why the labelling rule gave it. Recording the
-        spot-check is `replaybook labels check`, by a person at the command line."""
-        return _guard(workflow.labels_sample, testset, None)
+        expected outcome (act or escalate) and why the labelling rule gave it; cases an
+        earlier spot-check covered come last. Recording the spot-check is `replaybook labels
+        check`, by a person at the command line."""
+        return _guard(workflow.labels_sample, testset, None, labels_file)
 
     @server.tool(annotations=WRITES)
-    def replaybook_groups(run_dir: str) -> dict[str, Any]:
+    def replaybook_groups(run_dir: str, model: bool = False) -> dict[str, Any]:
         """Group a run's failures by cause, with two examples each; writes groups.json into
-        the run directory."""
-        return _guard(workflow.groups, run_dir)
+        the run directory. `model` has the fast model write each cause (within the spend
+        cap); the rule text stays when it is offline, and each group says which wrote it."""
+        return _guard(workflow.groups, run_dir, model)
 
     @server.tool(annotations=WRITES)
     def replaybook_check(

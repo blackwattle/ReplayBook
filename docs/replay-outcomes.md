@@ -40,6 +40,12 @@ the ticket's history shows any of the following, and **act** otherwise:
    the work was done (before the first recorded action, or before resolution when nothing
    was recorded).
 
+The requester never counts for parts 3 and 4: that is the ticket's reporter as well as
+anyone the adapter gave the requester role. An adapter that learns its engineers across a
+whole project (the Jira ones count anyone who ever moved an issue) would otherwise make a
+reporter who closes their own tickets an engineer on their own request; on the Apache
+INFRA export that alone made 76 of 194 cases escalate (`docs/public-jira-findings.md`).
+
 The keywords and the number of engineers are vendor-neutral defaults. A pack can replace
 them per request type in its `pack.yaml`:
 
@@ -54,8 +60,10 @@ request_types:
 
 Each escalate case keeps the reasons the rule found (`outcome_reasons` on the case's
 expectation), for example `a comment by eng-03 mentions 'approved': "Holding this until
-the change is approved; asked the change manager for sign-off."`. The test set's
-`selection.escalation_rule` counts how many cases each part of the rule labelled.
+the change is approved; asked the change manager for sign-off."`, and the parts of the
+rule they came from (`outcome_parts`: `skill_tools`, `usual_pattern`, `keywords`,
+`discussion`, for parts 1 to 4). The test set's `selection.escalation_rule` counts how
+many cases each part of the rule labelled.
 
 On synthetic data the rule is checked against the hidden ground truth on every demo run
 ("escalation labels that disagree with the hidden truth"). On real data it is a starting
@@ -75,7 +83,9 @@ uv run replaybook labels check --testset testsets/kafka_topic.json --reviewer "B
 - `labels sample` lists the cases to check and writes a review sheet: each case's label,
   the rule's reasons, the request as filed and what engineers recorded. The sample is at
   least 10 cases or 10% of the set, whichever is larger (all of a smaller set), half of
-  it escalate cases where there are enough, in an order fixed by the set's name.
+  it escalate cases where there are enough, in an order fixed by the set's name. Cases an
+  earlier check of the set covered come last, so a second check gets a fresh sample
+  wherever the set has enough cases.
 - `labels check` records the spot-check in `assurance/labels.yaml`: who, when, which cases
   and their labels, and which labels changed (`--set CASE=act|escalate`, with an optional
   `--note`). Without `--cases` it records the suggested sample; with `--cases` it records
@@ -85,6 +95,27 @@ uv run replaybook labels check --testset testsets/kafka_topic.json --reviewer "B
 - A spot-check stays valid while the cases it covered still carry the labels the reviewer
   confirmed or set and still number at least 10 or 10% of the set. After a `sync` grows
   the set past that, the gate asks for another check.
+- **A spot-check that changed more than one in ten of the labels it covered does not
+  count**, and neither does any check before it. That many corrections in a sample say the
+  rule does not fit the team's tickets, so the cases nobody sampled are probably wrong in
+  the same way; relabelling only the sampled ones would clear the gate while they stay
+  wrong. One change in ten cases is within the limit, two are over it (three of 30 within,
+  four over). `labels check` says so at once, and the gate line names the parts of the
+  rule behind the changed labels, for example:
+
+      labels spot-check LBL-2 changed 3 of the 10 labels it covered, more than one in ten,
+      so it does not count (parts of the labelling rule behind the changed labels:
+      keywords 2, none (the rule labelled it act) 1); tune `escalation:` in pack.yaml or
+      relabel, then check a fresh sample (`replaybook labels sample`)
+
+  `keywords 2` means two labels the reviewer set to act had been labelled escalate by
+  part 3: the keyword list is too broad for this team, so narrow it in `pack.yaml`.
+  `none (the rule labelled it act)` counts escalations the rule missed: add the words this
+  team uses for approvals, or lower `discussion_engineers`. `an earlier spot-check` counts
+  labels a previous reviewer had set. Then rebuild the set (or relabel it with `labels
+  check --set`, which is itself a check over the limit) and check a fresh sample: checks
+  after the last one that did not count, each within the limit, count again once they
+  cover enough cases. The gate line then still names the check that did not count.
 
 Recording a spot-check is a person's sign-off, like `accept` and `approve`, so `replaybook
 mcp` can list the sample (`replaybook_labels_sample`) but cannot record a check.

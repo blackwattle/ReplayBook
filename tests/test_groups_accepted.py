@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from replaybook import workflow
 from replaybook.adapters.synthetic import load_platform, load_tickets
 from replaybook.agents.scripted import DEMO_FLAWS, ScriptedAgent
 from replaybook.cli import app
 from replaybook.eval.accepted import AcceptedDifferences, apply_accepted, suggest
-from replaybook.eval.groups import group_failures
+from replaybook.eval.groups import cause_line, describe_with_model, group_failures
 from replaybook.eval.quality import group_purity
 from replaybook.eval.runner import RunResult, run_replay
 from replaybook.eval.testset import build_test_set
+from replaybook.llm.client import LLMResponse, ModelUnavailable
+from replaybook.llm.fake import FakeLLM, text_response
 
 TODAY = date(2026, 10, 18)
 
@@ -59,6 +63,66 @@ def test_groups_match_seeded_flaws(flawed_kafka: RunResult, small_dataset: Path)
     assert [g.model_dump() for g in group_failures(flawed_kafka.results)] == [
         g.model_dump() for g in groups
     ]
+
+
+def test_model_writes_group_causes_and_the_rules_stay_when_offline_or_capped(
+    flawed_kafka: RunResult,
+) -> None:
+    groups = group_failures(flawed_kafka.results)
+    rule_text = [g.cause for g in groups]
+    assert len(groups) >= 3
+
+    fake = FakeLLM(responder=lambda _messages, _tools: text_response("  The skill skips it. "))
+    written = describe_with_model([g.model_copy(deep=True) for g in groups], fake)
+    assert [g.cause for g in written] == ["The skill skips it."] * len(groups)
+    assert {(g.cause_source, g.cause_model) for g in written} == {("model", "fake/strong")}
+    assert [c["tier"] for c in fake.calls] == ["fast"] * len(groups)
+    assert cause_line(written) == f"causes: {len(groups)} by fake/strong"
+
+    offline = describe_with_model([g.model_copy(deep=True) for g in groups], FakeLLM(offline=True))
+    assert [g.cause for g in offline] == rule_text
+    assert {(g.cause_source, g.cause_note) for g in offline} == {
+        ("rules", "model unavailable: fake offline")
+    }
+
+    def at_the_cap(_messages: list, _tools: list | None) -> LLMResponse:
+        if len(capped.calls) > 1:
+            capped.offline = True  # what the client does when a call reaches the cap
+            raise ModelUnavailable("spend cap of 20.0 USD reached")
+        return text_response("Written before the cap.")
+
+    capped = FakeLLM(responder=at_the_cap)
+    mixed = describe_with_model([g.model_copy(deep=True) for g in groups], capped)
+    assert len(capped.calls) == 2, "no call after the client went offline"
+    assert mixed[0].cause_source == "model" and mixed[0].cause == "Written before the cap."
+    assert [g.cause for g in mixed[1:]] == rule_text[1:]
+    assert all("spend cap of 20.0 USD reached" in g.cause_note for g in mixed[1:])
+    assert cause_line(mixed) == (
+        f"causes: 1 by fake/strong, {len(groups) - 1} from the rules (model unavailable: "
+        "spend cap of 20.0 USD reached)"
+    )
+
+
+def test_groups_model_option(
+    flawed_kafka: RunResult, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "results.json").write_text(flawed_kafka.model_dump_json(), encoding="utf-8")
+    fake = FakeLLM(responder=lambda _messages, _tools: text_response("From the model."))
+    result = workflow.groups(run_dir, model=True, llm=fake)
+    assert "causes: " in result["message"] and "by fake/strong" in result["message"]
+    saved = json.loads((run_dir / "groups.json").read_text(encoding="utf-8"))
+    assert {(g["cause"], g["cause_source"]) for g in saved} == {("From the model.", "model")}
+    assert workflow.groups(run_dir)["groups"][0]["cause_source"] == "rules", "off by default"
+
+    # From the command line with the models off: the rule text, and the reason it stayed.
+    monkeypatch.setenv("REPLAYBOOK_OFFLINE", "true")
+    monkeypatch.setenv("REPLAYBOOK_CACHE_DIR", str(tmp_path / "cache"))
+    shown = CliRunner().invoke(app, ["groups", str(run_dir), "--model"])
+    assert shown.exit_code == 0, shown.output
+    assert "from the rules (model unavailable: REPLAYBOOK_OFFLINE is set)" in shown.output
+    assert "(rule text kept: model unavailable: REPLAYBOOK_OFFLINE is set)" in shown.output
 
 
 def test_fixed_run_failures_are_flagged_as_outdated_history(fixed_quota: RunResult) -> None:

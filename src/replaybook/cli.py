@@ -778,15 +778,30 @@ def report(
 
 
 @app.command()
-def groups(run_dir: Annotated[Path, typer.Argument(help="Run directory from replay.")]) -> None:
+def groups(
+    run_dir: Annotated[Path, typer.Argument(help="Run directory from replay.")],
+    model: Annotated[
+        bool,
+        typer.Option(
+            "--model",
+            help="Have the fast model (REPLAYBOOK_MODEL_FAST) write each group's cause. The "
+            "rule text stays when the model is offline or at the spend cap; each group says "
+            "which wrote it.",
+        ),
+    ] = False,
+) -> None:
     """Group a run's failures by cause, with two examples each, and save groups.json."""
     from replaybook import workflow
 
-    result = run_workflow(workflow.groups, run_dir)
+    result = run_workflow(workflow.groups, run_dir, model)
     for g in result["groups"]:
         flag = "  [history likely outdated]" if g["likely_history_outdated"] else ""
         typer.echo(f"{g['id']} ({g['count']}) {g['label']}{flag}")
         typer.echo(f"    {g['cause']}")
+        if g["cause_source"] == "model":
+            typer.echo(f"    (cause written by {g['cause_model']})")
+        elif model:
+            typer.echo(f"    (rule text kept: {g['cause_note'] or 'no reason recorded'})")
         for ex in g["examples"]:
             typer.echo(f"    - {ex['case_id']}: {ex['summary'][:70]}")
 
@@ -1233,12 +1248,14 @@ def labels_sample(
     out: Annotated[
         Path | None, typer.Option(help="Write the review sheet (Markdown) here.")
     ] = None,
+    labels_file: Annotated[Path, typer.Option(help=LABELS_HELP)] = DEFAULT_LABELS,
 ) -> None:
     """List the cases to spot-check (at least 10 or 10% of the set, whichever is larger) with
-    each label and why the rule gave it; --out writes a review sheet."""
+    each label and why the rule gave it; --out writes a review sheet. Cases an earlier
+    check covered come last, so the sample is a fresh one where the set allows."""
     from replaybook import workflow
 
-    result = run_workflow(workflow.labels_sample, testset, out)
+    result = run_workflow(workflow.labels_sample, testset, out, labels_file)
     if out is None:
         typer.echo("")
         typer.echo(result["sheet"])
@@ -1264,8 +1281,9 @@ def labels_check(
 ) -> None:
     """Record a person's spot-check of the escalation labels: who, when, which cases and
     which labels changed. The go-live gate needs one covering at least 10 cases or 10% of
-    the set. Not available through `replaybook mcp`: a person signs this."""
-    from replaybook.eval.labels import LabelChecks, record_check
+    the set; a check that changed more than one in ten of its labels does not count. Not
+    available through `replaybook mcp`: a person signs this."""
+    from replaybook.eval.labels import LabelChecks, record_check, uncounted
     from replaybook.schema.testcase import TestSet
 
     if not testset.is_file():
@@ -1294,6 +1312,8 @@ def labels_check(
     )
     for change in entry.changed:
         typer.echo(f"  CHANGED {change.case_id}: {change.was} -> {change.now} ({testset} updated)")
+    if not entry.counts:
+        typer.echo(f"  NOTE {uncounted(entry).line()}")
 
 
 shadow_app = typer.Typer(
