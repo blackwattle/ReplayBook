@@ -726,6 +726,9 @@ def knowledge_eval(
     per-ticket results."""
     from replaybook import workflow
 
+    def progress(source: str, completed: int, total: int, errors: int) -> None:
+        typer.echo(f"{source}: completed {completed}/{total} (errors: {errors})", err=True)
+
     run_workflow(
         workflow.knowledge_eval,
         data,
@@ -741,6 +744,7 @@ def knowledge_eval(
         request_type,
         command,
         transport,
+        progress=progress,
     )
 
 

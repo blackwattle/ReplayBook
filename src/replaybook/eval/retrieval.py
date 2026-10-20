@@ -37,9 +37,10 @@ import math
 import re
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -297,7 +298,10 @@ def run_source(
     k: int,
     query_chars: int,
     workers: int = 4,
+    progress: Callable[[int, int, int], None] | None = None,
 ) -> list[CaseScore]:
+    """Return scores in case order; progress receives (completed, total, errors)."""
+
     def one(ticket: Ticket) -> CaseScore:
         relevant = truth[ticket.id]
         started = time.perf_counter()
@@ -324,8 +328,17 @@ def run_source(
             seconds=round(time.perf_counter() - started, 4),
         )
 
+    total = len(cases)
+    if progress is not None:
+        progress(0, total, 0)
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        return list(pool.map(one, cases))
+        futures = [pool.submit(one, ticket) for ticket in cases]
+        errors = 0
+        for completed, future in enumerate(as_completed(futures), start=1):
+            errors += int(future.result().error is not None)
+            if progress is not None:
+                progress(completed, total, errors)
+        return [future.result() for future in futures]
 
 
 def summarise(scores: list[CaseScore], k: int) -> dict[str, Any]:
@@ -577,9 +590,11 @@ def evaluate(
     workers: int = 4,
     agent: Any = None,
     agent_name: str = "",
+    progress: Callable[[str, int, int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Score every source on the same cases. `agent` (with `agent_name`) adds an agent under
-    test as one more source, after the searches."""
+    test as one more source, after the searches. `progress` receives (source, completed,
+    total, errors) at source startup and after each completed case."""
     from replaybook.adapters.synthetic import load_platform, load_tickets
     from replaybook.mock_env.knowledge import Corpus
     from replaybook.packs import registry
@@ -627,7 +642,15 @@ def evaluate(
     }
     scored: dict[str, list[CaseScore]] = {}
     for name, search in searches.items():
-        scores = run_source(search, cases, truth, k, query_chars, workers)
+        scores = run_source(
+            search,
+            cases,
+            truth,
+            k,
+            query_chars,
+            workers,
+            progress=partial(progress, name) if progress is not None else None,
+        )
         with (out_dir / f"cases_{name}.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
             for score in scores:
                 fh.write(json.dumps(score.as_dict()) + "\n")

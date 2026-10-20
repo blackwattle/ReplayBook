@@ -413,6 +413,10 @@ server in `examples/ticket_rag/`.
 Invalid pack configuration makes `knowledge eval` exit with a usage error (code 2),
 including when `--agent` is enabled.
 
+`knowledge eval` writes per-source completion counts to stderr at source startup and after
+each finished case, for example `agent-skill: completed 2/5 (errors: 1)`. Errors count failed
+executions, not retrieval misses; saved case results stay in selected-ticket order.
+
 ## How scoring works
 
 Recorded writes are compared with the actions engineers took, after per-tool

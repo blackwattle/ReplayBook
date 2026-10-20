@@ -18,6 +18,7 @@ import shutil
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import pytest
@@ -487,6 +488,67 @@ def test_score_ranking() -> None:
     assert set(retrieval.cutoffs(7)) == {1, 3, 5, 7}
 
 
+@pytest.mark.parametrize("fail_fast", [False, True])
+def test_run_source_reports_each_completion_without_waiting_for_case_order(
+    fail_fast: bool,
+) -> None:
+    release_slow = Event()
+    cases = [_ticket("T-SLOW", T0, "slow case"), _ticket("T-FAST", T0, "fast case")]
+    truth = {ticket.id: {"T-RELATED": 1} for ticket in cases}
+    updates: list[tuple[int, int, int]] = []
+
+    def search(ticket: Ticket, _query: str, _limit: int) -> retrieval.Found:
+        if ticket.id == "T-SLOW":
+            assert release_slow.wait(5), "progress waited for the first input"
+        elif fail_fast:
+            raise RuntimeError("synthetic search failure")
+        return retrieval.Found(["T-RELATED"])
+
+    def progress(completed: int, total: int, errors: int) -> None:
+        updates.append((completed, total, errors))
+        if completed == 1:
+            release_slow.set()
+
+    scores = retrieval.run_source(search, cases, truth, 5, 1000, workers=2, progress=progress)
+    assert updates == [(0, 2, 0), (1, 2, int(fail_fast)), (2, 2, int(fail_fast))]
+    assert [score.ticket_id for score in scores] == [ticket.id for ticket in cases]
+    assert scores[0].error is None
+    assert (scores[1].error is not None) == fail_fast
+
+
+def test_run_source_progress_handles_no_cases() -> None:
+    updates: list[tuple[int, int, int]] = []
+    scores = retrieval.run_source(
+        lambda *_args: retrieval.Found([]),
+        [],
+        {},
+        5,
+        1000,
+        progress=lambda completed, total, errors: updates.append((completed, total, errors)),
+    )
+    assert scores == [] and updates == [(0, 0, 0)]
+
+
+def test_knowledge_eval_progress_is_written_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    from replaybook import workflow
+
+    def evaluate(*args: Any, progress: Any) -> dict[str, str]:
+        progress("sample", 0, 2, 0)
+        progress("sample", 1, 2, 0)
+        progress("sample", 2, 2, 1)
+        return {"message": "report ready"}
+
+    monkeypatch.setattr(workflow, "knowledge_eval", evaluate)
+    result = CliRunner().invoke(app, ["knowledge", "eval", "--n", "2"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "report ready\n"
+    assert result.stderr.splitlines() == [
+        "sample: completed 0/2 (errors: 0)",
+        "sample: completed 1/2 (errors: 0)",
+        "sample: completed 2/2 (errors: 1)",
+    ]
+
+
 def test_eval_compares_builtin_and_the_pack(
     small_dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -518,6 +580,11 @@ def test_eval_compares_builtin_and_the_pack(
     assert "builtin: hit@5" in result.output and "ticket_rag: hit@5" in result.output
     report = json.loads((out / "retrieval.json").read_text(encoding="utf-8"))
     assert set(report["sources"]) == {"builtin", "ticket_rag"}
+    for source in report["sources"]:
+        assert f"{source}: completed 0/{report['cases']} (errors: 0)" in result.stderr
+        assert (
+            f"{source}: completed {report['cases']}/{report['cases']} (errors: 0)" in result.stderr
+        )
     pack = report["sources"]["ticket_rag"]
     assert pack["errors"] == 0 and pack["guard"]["leaks"] > 0, (
         "without an as-of filter the server returns the ticket itself and later ones"
