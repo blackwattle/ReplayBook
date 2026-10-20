@@ -48,7 +48,7 @@ with a placeholder check for every non-destructive write (an unknown read tool a
 
 ## Validation
 
-```powershell
+```bash
 uv run replaybook skills validate                     # every skill of the loaded packs
 uv run replaybook skills validate --type kafka_topic  # one request type
 uv run replaybook skills validate --file packs/payroll/skills/example/SKILL.md

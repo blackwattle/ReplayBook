@@ -45,7 +45,7 @@ agent's proposal against what they did. The evidence pack gets a shadow section:
 proposals were made, how many could be scored, the pass rate, and the unsafe proposals
 that were caught before the agent had any access.
 
-```powershell
+```bash
 uv run replaybook shadow record --type kafka_topic --data data/live --out shadow/kafka --agent external --command "python my_agent.py"
 # ... days later, after engineers resolved some of those tickets and the dataset was re-exported:
 uv run replaybook shadow score --data data/live --out shadow/kafka
@@ -59,7 +59,7 @@ duplicates or "won't do" are unscorable; tickets still open are pending.
 
 ## The ten-minute demo
 
-```powershell
+```bash
 uv sync
 uv run replaybook demo --out demo_out
 ```
@@ -126,7 +126,7 @@ Three kinds of agent can be put under test:
   collects the writes the servers recorded. `examples/external_agent/agent.py` is a tiny
   working example.
 
-```powershell
+```bash
 uv run replaybook generate --out data/generated --seed 42 --n 3000
 uv run replaybook build-testset --type kafka_topic --data data/generated --n 40
 uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-v1 --agent scripted --flaws guess_missing_info,superseded_procedure,unsafe_write
@@ -146,7 +146,7 @@ ticket prompt (argument, stdin, file or environment variable), a timeout, and wh
 the harness's built-in tools are switched off so it can only act through the recorded
 mock tools. Launchers ship for Claude Code, Codex CLI, Gemini CLI and OpenCode.
 
-```powershell
+```bash
 uv run replaybook launchers                                  # what is available and whether each CLI is on PATH
 uv run replaybook launchers show claude-code --testset testsets/kafka_topic.json   # dry run: the exact command, config file and prompt
 uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-claude --agent claude-code
@@ -204,7 +204,7 @@ framework that uses a provider's native function calling instead of MCP. Two mor
 open onto the same world state, the same call recorder and the same time-travel guard, so
 scores are comparable whichever one the agent used:
 
-```powershell
+```bash
 uv run replaybook mock-server --http --port 8765 --world world.json --record calls.jsonl   # every mock tool on one MCP server at http://127.0.0.1:8765/mcp
 uv run replaybook tool-endpoint --port 8766 --world world.json --record calls.jsonl        # GET /tools (JSON Schema), POST /tools/<name>
 uv run replaybook tools schema --shape openai                                             # the tool list in the function-calling shape
@@ -227,7 +227,7 @@ else.
 
 Before writing any skill, find out which request types cost the most engineer time:
 
-```powershell
+```bash
 uv run replaybook discover --data data/generated --out discovery
 ```
 
@@ -246,7 +246,7 @@ spot-checked and its run is approved as the baseline. After go-live, every live 
 approved by a person against an approval request that shows the evidence, and the team's
 runtime reports each run back so the skill keeps being scored.
 
-```powershell
+```bash
 uv run replaybook accept --suggest --run runs/kafka-v2
 uv run replaybook accept --group G1 --run runs/kafka-v2 --reason "History predates the KRaft move" --approver ben --kind outdated_history
 uv run replaybook approve --run runs/kafka-v2 --approver ben
@@ -308,7 +308,7 @@ uv run replaybook evidence --run runs/check-kafka --testset testsets/kafka_topic
 The universal fallback is a table. Write a column mapping once (`docs/ticket-sources.md`
 documents every field, with the payroll example as a worked case) and import:
 
-```powershell
+```bash
 uv run replaybook tickets import --mapping examples/payroll/csv/mapping.yaml --out data/payroll
 ```
 
@@ -335,12 +335,12 @@ are no ask cases and an agent that never asks would look fine.
 Synthetic history proves the harness; real history shows what breaks. Two adapters turn
 Jira issues into canonical tickets through one shared conversion (`jira_issue.py`):
 
-```powershell
+```bash
 # The Public Jira Dataset (Zenodo 10.5281/zenodo.5882881, CC BY 4.0): restore only the
 # collection you need into a local MongoDB with the compose `jira` profile, then export
 # one ops-style project. A .bson collection file or a .jsonl of issues works without a database.
 docker compose --profile jira up -d mongo
-$env:JIRA_DUMP_DIR = "D:\datasets\ThePublicJiraDataset. DataDump"
+export JIRA_DUMP_DIR="/data/datasets/ThePublicJiraDataset. DataDump"
 docker compose --profile jira run --rm jira-restore
 uv run replaybook public-jira export --input "mongodb://127.0.0.1:27017/JiraReposAnon?collection=Apache" --project INFRA --out data/public_jira/infra
 
@@ -475,7 +475,7 @@ render` and `replaybook checks compare` give it the rendered check and the verdi
 To make a pack from your own MCP server, let Replaybook list its tools and generate the
 recording mock and a scoring skeleton, then edit the two YAML files:
 
-```powershell
+```bash
 uv run replaybook tools import --name payroll --command "python path/to/payroll_server.py" --out packs
 uv run replaybook tools import --name payroll --json saved-tools-list.json --out packs   # from a saved tools/list result
 ```
@@ -535,9 +535,9 @@ Replaybook is meant to run inside your network. The image is offline by default,
 by default, sends no telemetry, runs as a non-root user and ships its own software bill of
 materials.
 
-```powershell
+```bash
 docker build -t replaybook .
-docker run --rm --network none -v "${PWD}/demo_out:/work/demo_out" replaybook   # the demo
+docker run --rm --network none -v "$PWD/demo_out:/work/demo_out" replaybook     # the demo
 docker run --rm --network none replaybook status                                # what it can reach
 docker compose up --build                                                       # the demo through compose
 ```
@@ -580,7 +580,7 @@ them on purpose.
 
 ## Development
 
-```powershell
+```bash
 uv sync --all-groups
 uv run ruff check .
 uv run ruff format --check .

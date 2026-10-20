@@ -135,7 +135,7 @@ What the fields mean:
 `examples/payroll/csv/` holds the conformance tickets as a ticket system would export
 them: `tickets.csv`, `comments.csv`, `history.csv`, `actions.jsonl` and `mapping.yaml`.
 
-```powershell
+```bash
 uv run replaybook tickets import --mapping examples/payroll/csv/mapping.yaml --out data/payroll
 uv run replaybook discover --data data/payroll --out discovery/payroll
 ```
@@ -145,7 +145,7 @@ The test suite checks that the import produces the same canonical tickets as
 
 ## ServiceNow
 
-```powershell
+```bash
 # SERVICENOW_INSTANCE, SERVICENOW_USER, SERVICENOW_PASSWORD in .env
 uv run replaybook servicenow export --table incident --out data/servicenow/incident
 uv run replaybook servicenow export --table sc_req_item --query "assignment_group.name=Platform" --out data/servicenow/platform-requests --effort logged
@@ -215,7 +215,7 @@ engineers: [alice]
 effort: {source: status_time, working_statuses: [In Progress, Reopened]}
 ```
 
-```powershell
+```bash
 uv run replaybook postgres import --mapping warehouse.yaml --out data/warehouse
 ```
 
