@@ -31,6 +31,7 @@ NETWORK_MODULES = {
     "http.client",
     "requests",
     "httpx",
+    "httpx2",
     "aiohttp",
     "websockets",
     "litellm",
