@@ -710,6 +710,32 @@ def packs() -> dict[str, Any]:
     }
 
 
+def research_agent(kind: str, request_type: str, command: str, transport: str) -> Any:
+    """The agent for `knowledge eval --agent`: any agent, following the research skill of a
+    request type (a knowledge pack's `<pack>_research`, written by `knowledge import`)."""
+    from replaybook.checks import SkillInvalid, require_valid_skill
+    from replaybook.mock_env.registry import describe_all_tools
+    from replaybook.packs import registry
+
+    if kind == "scripted":
+        raise WorkflowError(
+            "the scripted agent follows the demo's procedures, not a research skill; use skill, "
+            "external or a launcher"
+        )
+    if kind != "external" or request_type:
+        if request_type not in registry().request_types:
+            research = [k for k in registry().request_types if k.endswith("_research")]
+            raise WorkflowError(
+                f"--type must name the research request type the agent follows; loaded: "
+                f"{', '.join(research) or 'none (run `replaybook knowledge import`)'}"
+            )
+        try:
+            require_valid_skill(request_type, describe_all_tools())
+        except SkillInvalid as exc:
+            raise WorkflowError(str(exc)) from exc
+    return make_agent(kind, "", command, request_type, transport)
+
+
 def knowledge_eval(
     data: Path = DEFAULT_DATA_DIR,
     sources: list[str] | None = None,
@@ -720,9 +746,14 @@ def knowledge_eval(
     until: str = "",
     query_chars: int = 1000,
     workers: int = 4,
+    agent: str = "",
+    request_type: str = "",
+    command: str = "",
+    transport: str = "stdio",
 ) -> dict[str, Any]:
-    """Score past-ticket search (builtin and/or knowledge packs) against the tickets each
-    ticket's links and comments point to, at each ticket's creation time."""
+    """Score past-ticket search (builtin and/or knowledge packs, and optionally an agent that
+    researches each ticket) against the tickets each ticket's links and comments point to,
+    at each ticket's creation time."""
     from datetime import UTC, datetime
 
     from replaybook.eval.retrieval import REPORT_FILE, evaluate
@@ -738,6 +769,9 @@ def knowledge_eval(
     data = Path(data)
     if not (data / "tickets.jsonl").is_file():
         raise WorkflowError(f"no tickets.jsonl in {data}")
+    agent_under_test = None
+    if agent:
+        agent_under_test = research_agent(agent, request_type, command, transport)
     try:
         result = evaluate(
             data,
@@ -749,6 +783,8 @@ def knowledge_eval(
             until=day(until, "until"),
             query_chars=query_chars,
             workers=workers,
+            agent=agent_under_test,
+            agent_name=agent,
         )
     except ValueError as exc:
         raise WorkflowError(str(exc)) from exc
@@ -762,6 +798,11 @@ def knowledge_eval(
         )
         if summary["guard"] is not None:
             line += f"; guard removed {summary['guard']['leaks']} leaked results"
+        if summary.get("agent"):
+            line += (
+                f"; {summary['agent']['tool_calls_mean']} tool calls per ticket, "
+                f"{summary['agent']['unseen_citations']} cited ids no tool returned"
+            )
         compared = result["comparison"].get(name)
         if compared is not None:
             line += (

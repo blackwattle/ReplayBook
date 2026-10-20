@@ -167,13 +167,18 @@ def build_server() -> MCPServer:
         until: str = "",
         query_chars: int = 1000,
         workers: int = 4,
+        agent: str = "",
+        request_type: str = "",
+        command: str = "",
     ) -> dict[str, Any]:
         """Score past-ticket search against history before any agent uses it: for the newest
         n tickets with links to (or mentions of) earlier tickets, search with the ticket as
         filed at its creation time, behind the time-travel guard, and report hit rate,
         recall, MRR and nDCG at k. sources: "builtin" (Replaybook's keyword search) and/or
         knowledge packs by name, compared side by side; a knowledge pack also reports the
-        leaked results the guard removed. Writes retrieval.md and retrieval.json to out."""
+        leaked results the guard removed. agent (skill, external or a launcher) with
+        request_type (a knowledge pack's research type) also scores an agent that researches
+        each ticket and cites what it relied on. Writes retrieval.md and retrieval.json."""
         return _guard(
             workflow.knowledge_eval,
             data,
@@ -185,6 +190,9 @@ def build_server() -> MCPServer:
             until,
             query_chars,
             workers,
+            agent,
+            request_type,
+            command,
         )
 
     @server.tool(annotations=READS)
