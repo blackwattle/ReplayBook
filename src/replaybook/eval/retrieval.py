@@ -16,7 +16,10 @@ scores a search on its own, before any agent is involved, against the team's own
 Sources are `builtin` (Replaybook's own keyword search over the dataset, the baseline) and
 any loaded knowledge pack by name. Several sources in one run are scored on the same cases
 side by side. Links are never complete, so the absolute numbers are lower bounds; the
-comparison between sources, or between two settings of one source, is what to read.
+comparison between sources, or between two settings of one source, is what to read. So
+every hit rate carries a 95% Wilson interval, and every source after the first is compared
+with the first ticket by ticket: on how many tickets it ranked the first related ticket
+higher, lower or the same, with an exact sign test on the difference.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from replaybook.eval.stats import wilson_interval
 from replaybook.mock_env.guarded import GuardStats, same_id
 from replaybook.schema.ticket import Ticket
 
@@ -248,10 +252,14 @@ def run_source(
 def summarise(scores: list[CaseScore], k: int) -> dict[str, Any]:
     scored = [s for s in scores if s.error is None]
     metrics: dict[str, float] = {}
+    intervals: dict[str, list[float]] = {}
     names = sorted({name for s in scored for name in s.scores})
     for name in names:
         values = [s.scores[name] for s in scored if name in s.scores]
         metrics[name] = round(sum(values) / len(values), 4) if values else 0.0
+        if name.startswith(("hit@", "duplicate_found@")):
+            low, high = wilson_interval(int(sum(values)), len(values))
+            intervals[name] = [round(low, 4), round(high, 4)]
     guard = GuardStats()
     guarded = [s for s in scored if s.guard is not None]
     for s in guarded:
@@ -263,12 +271,47 @@ def summarise(scores: list[CaseScore], k: int) -> dict[str, Any]:
         "errors": len(scores) - len(scored),
         "empty": sum(1 for s in scored if not s.returned),
         "metrics": metrics,
+        "intervals": intervals,
         "duplicate_cases": sum(1 for s in scored if f"duplicate_found@{k}" in s.scores),
         "guard": guard.as_dict() if guarded else None,
         "cases_with_leaks": sum(1 for s in guarded if (s.guard or {}).get("leaks")),
         "seconds_mean": round(sum(seconds) / len(seconds), 4) if seconds else 0.0,
         "seconds_p95": seconds[min(len(seconds) - 1, int(0.95 * len(seconds)))] if seconds else 0.0,
         "first_errors": [s.error for s in scores if s.error][:3],
+    }
+
+
+def sign_test(better: int, worse: int) -> float:
+    """Two-sided exact sign test: how likely a split at least this uneven is by chance."""
+    n = better + worse
+    if n == 0:
+        return 1.0
+    tail = sum(math.comb(n, i) for i in range(min(better, worse) + 1)) / 2**n
+    return min(1.0, 2 * tail)
+
+
+def compare(baseline: list[CaseScore], other: list[CaseScore]) -> dict[str, Any]:
+    """Ticket by ticket: did `other` rank the first related ticket higher than the baseline
+    (reciprocal rank within k), lower, or the same? Tickets where either errored are left out."""
+    by_id = {s.ticket_id: s for s in baseline if s.error is None}
+    better = worse = same = 0
+    for score in other:
+        base = by_id.get(score.ticket_id)
+        if base is None or score.error is not None:
+            continue
+        mine, theirs = score.scores.get("mrr", 0.0), base.scores.get("mrr", 0.0)
+        if mine > theirs:
+            better += 1
+        elif mine < theirs:
+            worse += 1
+        else:
+            same += 1
+    return {
+        "cases": better + worse + same,
+        "better": better,
+        "worse": worse,
+        "same": same,
+        "sign_test_p": round(sign_test(better, worse), 4),
     }
 
 
@@ -279,6 +322,34 @@ def _pct(value: float) -> str:
     return f"{value:.0%}"
 
 
+def _with_ci(summary: dict[str, Any], name: str) -> str:
+    value = summary["metrics"].get(name, 0.0)
+    low, high = summary.get("intervals", {}).get(name, [value, value])
+    return f"{value:.0%} ({low:.0%}-{high:.0%})"
+
+
+def _comparison(result: dict[str, Any]) -> str:
+    comparisons = result.get("comparison") or {}
+    if not comparisons:
+        return ""
+    baseline = result["baseline"]
+    lines = [
+        f"## Ticket by ticket against {baseline}",
+        "",
+        f"For each ticket: did the source rank the first related ticket higher than {baseline} "
+        "(within the top k), lower, or the same? The sign test says how likely a split at least "
+        "this uneven is by chance; below 0.05 the difference is unlikely to be luck.",
+        "",
+        "| Source | Higher | Same | Lower | Sign test p |",
+        "|---|---|---|---|---|",
+    ]
+    for name, c in comparisons.items():
+        lines.append(
+            f"| {name} | {c['better']} | {c['same']} | {c['worse']} | {c['sign_test_p']:.3g} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def render(result: dict[str, Any]) -> str:
     k = result["k"]
     sources = result["sources"]
@@ -287,7 +358,7 @@ def render(result: dict[str, Any]) -> str:
         ("Cases scored", lambda s: f"{s['cases'] - s['errors']} of {s['cases']}"),
     ]
     for cut in cutoffs(k):
-        rows.append((f"Hit@{cut}", lambda s, c=cut: _pct(s["metrics"].get(f"hit@{c}", 0))))
+        rows.append((f"Hit@{cut} (95% CI)", lambda s, c=cut: _with_ci(s, f"hit@{c}")))
     rows += [
         (f"Recall@{k}", lambda s: _pct(s["metrics"].get(f"recall@{k}", 0))),
         ("MRR", lambda s: f"{s['metrics'].get('mrr', 0):.3f}"),
@@ -295,7 +366,7 @@ def render(result: dict[str, Any]) -> str:
         (
             f"Duplicate found@{k}",
             lambda s: (
-                f"{_pct(s['metrics'].get(f'duplicate_found@{k}', 0))} of {s['duplicate_cases']}"
+                f"{_with_ci(s, f'duplicate_found@{k}')} of {s['duplicate_cases']}"
                 if s["duplicate_cases"]
                 else "-"
             ),
@@ -338,10 +409,11 @@ the top {k} results are scored. Written {result["created_at"]}.
 
 {chr(10).join(table)}
 
-**Hit@k**: share of tickets where at least one related ticket is in the top k. **Recall@k**:
-share of the related tickets found in the top k. **MRR**: 1 / rank of the first related
-ticket. **nDCG**: ranking quality, duplicates weighted twice.
+**Hit@k**: share of tickets where at least one related ticket is in the top k, with its 95%
+Wilson interval. **Recall@k**: share of the related tickets found in the top k. **MRR**:
+1 / rank of the first related ticket. **nDCG**: ranking quality, duplicates weighted twice.
 
+{_comparison(result)}
 ## Leaks the guard removed
 
 {chr(10).join(leak_lines)}
@@ -414,12 +486,17 @@ def evaluate(
         "until": until.date().isoformat() if until else None,
         "sources": {},
     }
+    scored: dict[str, list[CaseScore]] = {}
     for name, search in searches.items():
         scores = run_source(search, cases, truth, k, query_chars, workers)
         with (out_dir / f"cases_{name}.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
             for score in scores:
                 fh.write(json.dumps(score.as_dict()) + "\n")
         result["sources"][name] = summarise(scores, k)
+        scored[name] = scores
+    names = list(scored)
+    result["baseline"] = names[0]
+    result["comparison"] = {name: compare(scored[names[0]], scored[name]) for name in names[1:]}
     (out_dir / RESULTS_FILE).write_text(json.dumps(result, indent=2), encoding="utf-8")
     (out_dir / REPORT_FILE).write_text(render(result), encoding="utf-8")
     return result

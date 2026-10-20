@@ -397,9 +397,13 @@ one search through the guard, showing what was removed and why; `eval` scores th
 before any agent is involved: for the newest tickets that engineers linked to earlier ones
 (or mentioned them in a comment), does a search with the ticket as filed, at its creation
 time, find them? Hit rate, recall, MRR and nDCG at k, side by side with Replaybook's own
-keyword search, plus the leaks the guard had to remove. Then put the pack on
+keyword search, each hit rate with a 95% interval and every source compared with the first
+ticket by ticket, plus the leaks the guard had to remove. Then put the pack on
 `REPLAYBOOK_PACKS` and replay as usual: external agents, launchers and the skill agent all
-get its tools. `docs/knowledge-sources.md` has the details and a worked example with a fake
+get its tools. A live index changes, so `cache: record` keeps the server's answers and
+`cache: replay` pins them for baselines and CI (the default, `off`, writes nothing); every run
+records which knowledge packs it read and whether their answers were live or pinned, and the
+evidence pack says so. `docs/knowledge-sources.md` has the details and a worked example with a fake
 server in `examples/ticket_rag/`.
 
 ## How scoring works

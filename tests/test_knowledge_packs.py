@@ -156,7 +156,7 @@ def _install(
     """The example pack, loaded from a temp packs directory next to the repo's packs, with
     the fake server in-process over the tickets given."""
     pack_dir = tmp_path / "packs" / "ticket_rag"
-    shutil.copytree(EXAMPLE_PACK, pack_dir)
+    shutil.copytree(EXAMPLE_PACK, pack_dir, dirs_exist_ok=True)  # keeps a recorded .cache
     if not as_of:
         manifest = yaml.safe_load((pack_dir / "pack.yaml").read_text(encoding="utf-8"))
         for key in ("as_of_arg", "as_of_format"):
@@ -528,7 +528,7 @@ def test_eval_compares_builtin_and_the_pack(
         assert case["ticket_id"] not in case["returned"]
         assert all(created[r] < created[case["ticket_id"]] for r in case["returned"])
     markdown = (out / "retrieval.md").read_text(encoding="utf-8")
-    assert "| Hit@5 |" in markdown and "Leaks the guard removed" in markdown
+    assert "| Hit@5 (95% CI) |" in markdown and "Leaks the guard removed" in markdown
     bad = CliRunner().invoke(
         app,
         ["knowledge", "eval", "--data", str(small_dataset), "--source", "kafka", "--out", str(out)],
@@ -581,3 +581,168 @@ def test_check_probes_through_the_guard(tmp_path: Path, monkeypatch: pytest.Monk
     assert result.exit_code == 0, result.output
     assert "the agent would see" in result.output and "ok" in result.output
     assert "fields of the first raw result: age_days, created, key" in result.output
+
+
+# --- the cache, run records and evidence ----------------------------------------------------
+
+
+def _set_cache(tmp_path: Path, mode: Any) -> None:
+    path = tmp_path / "packs" / "ticket_rag" / "pack.yaml"
+    manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+    manifest["knowledge"]["cache"] = mode
+    path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+
+def _install_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tickets: list[Ticket], mode: Any
+) -> tuple[Spy, Any]:
+    """The example pack with a cache mode, its cache built the way source_for builds it."""
+    spy = _install(tmp_path, monkeypatch, tickets)
+    _set_cache(tmp_path, mode)
+    packs.reset()
+    pack = packs.registry().pack("ticket_rag")
+    tools = json.loads((pack.path / "tools.json").read_text(encoding="utf-8"))["tools"]
+    cache = guarded.ResponseCache(
+        pack.knowledge.cache.effective(pack.name), pack.knowledge.server.describe()
+    )
+    spy = Spy(spy.remote)
+    guarded._sources[pack.path.resolve()] = GuardedSource(pack.knowledge, tools, spy, cache)
+    return spy, pack
+
+
+def test_cache_modes_parse_and_default_to_off(tmp_path: Path) -> None:
+    for value, mode in [
+        (None, "off"),
+        (False, "off"),
+        ("off", "off"),
+        (True, "record"),
+        ("record", "record"),
+        ({"mode": "replay", "dir": "pinned"}, "replay"),
+    ]:
+        spec = guarded.CacheSpec.parse(value, tmp_path)
+        assert spec.mode == mode, value
+    assert guarded.CacheSpec.parse({"mode": "replay", "dir": "pinned"}, tmp_path).dir == (
+        tmp_path / "pinned"
+    )
+    assert yaml.safe_load("cache: off")["cache"] is False, "YAML reads a bare off as false"
+    with pytest.raises(KnowledgeSpecError, match="off, record, replay"):
+        guarded.CacheSpec.parse("sometimes", tmp_path)
+
+
+def test_record_then_replay_pins_the_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tickets, under_test = _seeded()
+    spy, pack = _install_cached(tmp_path, monkeypatch, tickets, "record")
+    env = MockEnvironment(WorldState.from_ticket(under_test, {}))
+    first = env.call("search_tickets", {"query": "renew cert", "top_k": 3})
+    again = env.call("search_tickets", {"query": "renew cert", "top_k": 3})
+    assert first == again and len(spy.calls) == 1, "the second call came from the cache"
+    assert "error" in env.call("get_ticket", {"ticket_key": "T-MISSING"})
+    assert "error" in env.call("get_ticket", {"ticket_key": "T-MISSING"})
+    assert len(spy.calls) == 3, "a server error is not stored, so it is asked again"
+    stored = list((pack.path / ".cache").rglob("*.json"))
+    raw = stored[0].read_text(encoding="utf-8") if len(stored) == 1 else ""
+    assert '"age_days"' in raw and '"age_days"' not in json.dumps(first), (
+        "the cache keeps the raw answer; the guard runs again on every read"
+    )
+    digest = guarded.cache_digest(pack.path / ".cache")
+    assert digest is not None and len(digest) == 64
+
+    monkeypatch.setenv(guarded.CACHE_MODE_ENV, "replay")
+    spy, pack = _install_cached(tmp_path, monkeypatch, tickets, "record")
+    env = MockEnvironment(WorldState.from_ticket(under_test, {}))
+    assert env.call("search_tickets", {"query": "renew cert", "top_k": 3}) == first
+    missing = env.call("search_tickets", {"query": "something never asked", "top_k": 3})
+    assert "replay mode" in missing["error"] and spy.calls == [], "replay never calls the server"
+
+
+def test_cache_dir_can_live_outside_the_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tickets, under_test = _seeded()
+    monkeypatch.setenv(guarded.CACHE_DIR_ENV, str(tmp_path / "shared"))
+    _spy, _pack = _install_cached(tmp_path, monkeypatch, tickets, "record")
+    MockEnvironment(WorldState.from_ticket(under_test, {})).call(
+        "search_tickets", {"query": "renew cert"}
+    )
+    assert list((tmp_path / "shared" / "ticket_rag").rglob("*.json"))
+
+
+def test_runs_record_their_knowledge_packs_and_evidence_says_so(
+    small_dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from replaybook.eval.evidence import knowledge_limitations
+
+    _install(tmp_path, monkeypatch, _seeded()[0])
+    runner = CliRunner()
+    testset = tmp_path / "kafka.json"
+    built = runner.invoke(
+        app,
+        [
+            "build-testset",
+            "--type",
+            "kafka_topic",
+            "--data",
+            str(small_dataset),
+            "--n",
+            "3",
+            "--out",
+            str(testset),
+        ],
+    )
+    assert built.exit_code == 0, built.output
+    replayed = runner.invoke(
+        app,
+        [
+            "replay",
+            "--testset",
+            str(testset),
+            "--out",
+            str(tmp_path / "run"),
+            "--agent",
+            "scripted",
+        ],
+    )
+    assert replayed.exit_code in (0, 1), replayed.output
+    run = json.loads((tmp_path / "run" / "results.json").read_text(encoding="utf-8"))
+    recorded = run["environment"]["knowledge_packs"]
+    assert recorded == {
+        "ticket_rag": {
+            "server": "python ../../server.py --data ${TICKET_RAG_DATA}",
+            "transport": "stdio",
+            "cache": "off",
+            "cache_sha256": None,
+        }
+    }, "the reference to the variable is recorded, never its value"
+    (live,) = knowledge_limitations([run["environment"]])
+    assert "live index" in live and "cache: replay" in live
+    pinned = {
+        "ticket_rag": {**recorded["ticket_rag"], "cache": "replay", "cache_sha256": "ab" * 32}
+    }
+    (fixed,) = knowledge_limitations([{"knowledge_packs": pinned}])
+    assert "recorded responses (cache sha256 abababababab)" in fixed
+    (mixed,) = knowledge_limitations([{"knowledge_packs": pinned}, run["environment"]])
+    assert "live index" in mixed, "one live run makes the pack live in the evidence"
+    assert knowledge_limitations([{"air_gapped": True}]) == []
+
+
+def test_eval_reports_intervals_and_a_ticket_by_ticket_comparison(
+    small_dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from replaybook.adapters.synthetic import load_tickets
+
+    _install(tmp_path, monkeypatch, load_tickets(small_dataset))
+    result = retrieval.evaluate(
+        small_dataset, ["builtin", "ticket_rag"], tmp_path / "out", n=30, k=5
+    )
+    assert result["baseline"] == "builtin" and set(result["comparison"]) == {"ticket_rag"}
+    compared = result["comparison"]["ticket_rag"]
+    assert compared["better"] + compared["worse"] + compared["same"] == compared["cases"]
+    assert 0 <= compared["sign_test_p"] <= 1
+    low, high = result["sources"]["builtin"]["intervals"]["hit@5"]
+    assert low <= result["sources"]["builtin"]["metrics"]["hit@5"] <= high
+    markdown = (tmp_path / "out" / "retrieval.md").read_text(encoding="utf-8")
+    assert "Hit@5 (95% CI)" in markdown and "Ticket by ticket against builtin" in markdown
+    assert retrieval.sign_test(10, 0) == pytest.approx(2 / 1024)
+    assert retrieval.sign_test(3, 3) == 1.0 and retrieval.sign_test(0, 0) == 1.0

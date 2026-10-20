@@ -14,6 +14,9 @@ knowledge:
     # with url: (and headers: for its token, written as ${VARIABLE} from .env) instead.
     command: [python, ../../server.py, --data, "${TICKET_RAG_DATA}"]
     timeout_s: 60
+  # off (the default): every call is live. record: keep the server's raw answers in .cache/
+  # and reuse them. replay: recorded answers only, for a reproducible or offline re-run.
+  cache: off
   search: search_tickets
   lookup: get_ticket
   tools:

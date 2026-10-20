@@ -762,6 +762,13 @@ def knowledge_eval(
         )
         if summary["guard"] is not None:
             line += f"; guard removed {summary['guard']['leaks']} leaked results"
+        compared = result["comparison"].get(name)
+        if compared is not None:
+            line += (
+                f"; against {result['baseline']}: higher on {compared['better']}, lower on "
+                f"{compared['worse']}, same on {compared['same']} (sign test p "
+                f"{compared['sign_test_p']:.3g})"
+            )
         lines.append(line)
     result["message"] = "\n".join(lines) + f"\nreport: {Path(out) / REPORT_FILE}"
     return result

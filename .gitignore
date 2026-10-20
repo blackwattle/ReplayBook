@@ -9,6 +9,9 @@ __pycache__/
 .replaybook/
 demo_out/
 runs/
+retrieval/
+# Knowledge pack caches hold a search server's raw answers: ticket text.
+.cache/
 live/
 data/generated/
 *.egg-info/

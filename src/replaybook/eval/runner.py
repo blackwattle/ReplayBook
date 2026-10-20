@@ -30,12 +30,14 @@ from replaybook.checks import Check, checks_for, planned_checks, require_valid_s
 from replaybook.eval.accepted import AcceptedDifferences, apply_accepted
 from replaybook.eval.scoring import FAILING, OUTCOME_LABELS, OUTCOMES, CaseResult, score_case
 from replaybook.eval.stats import wilson_interval
+from replaybook.mock_env.guarded import describe_packs
 from replaybook.mock_env.knowledge import Corpus
 from replaybook.mock_env.registry import (
     MockEnvironment,
     describe_all_tools,
     tool_schema_fingerprint,
 )
+from replaybook.packs import registry
 from replaybook.schema.testcase import TestCase, TestSet
 from replaybook.skills import skill_identity
 
@@ -298,6 +300,9 @@ def run_replay(
     test_set_sha = test_set.sha256()
     environment = netguard.summary()
     environment["knowledge"] = str(knowledge.path) if knowledge and knowledge.path else None
+    # Knowledge packs read a team's own (live) search server: say which, and whether its
+    # answers were pinned (cache: replay) or could have changed since.
+    environment["knowledge_packs"] = describe_packs(registry().packs)
     skill = skill_identity(test_set.request_type)
     run = RunResult(
         run_id=run_id or out_dir.name,

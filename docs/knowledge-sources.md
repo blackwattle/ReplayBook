@@ -39,9 +39,11 @@ agent saw it. Only tools your server annotates read-only (or that the pack marks
 
 What the guard cannot do: change how your server **ranked** its results. If the index was
 built today, a ticket's embedding includes comments written after the horizon, and those
-can lift it in the ranking even though the comments themselves are cut from the result. A
-date-only creation field also means tickets from the horizon's own day are dropped. The report `knowledge eval` writes states the ranking
-limitation next to its numbers.
+can lift it in the ranking even though the comments themselves are cut from the result.
+That can only be fixed in the server, by filtering before ranking (see "Give your server an
+as-of filter" below); Replaybook states it wherever it matters: in the evidence pack of a run
+that used a knowledge pack, and in the `knowledge eval` report. A date-only creation field
+also means tickets from the horizon's own day are dropped.
 
 ## Making a knowledge pack
 
@@ -67,6 +69,7 @@ It prints what the server returned, what the guard removed and why, the fields o
 raw result, and every problem (a CHANGE_ME left, an argument the tool does not have, a tool
 not annotated read-only); it exits 1 while there are problems. `--at 2025-06-01T09:00:00Z`
 probes at an earlier horizon; `--refresh` lists the tools again after the server changed.
+The probe always asks the live server, whatever the cache mode.
 
 ### pack.yaml reference
 
@@ -80,6 +83,7 @@ knowledge:
     headers: {Authorization: "Bearer ${TICKET_RAG_TOKEN}"}
     env: {}                           # extra environment for a stdio server
     timeout_s: 60
+  cache: off                          # off | record | replay, or {mode: record, dir: .cache}
   search: search_tickets              # the tool `knowledge eval` scores (needs query_arg)
   lookup: get_ticket                  # one ticket by id: decides whether an id is visible
   tools:
@@ -112,6 +116,40 @@ knowledge:
       remove: [links]
 ```
 
+## Reproducible runs: the cache
+
+A live index changes every day, so the same case replayed a week apart can see different
+search results, and a difference between a run and its baseline may come from the index
+rather than the agent. The `cache:` setting decides:
+
+| Mode | What happens | Use it for |
+|---|---|---|
+| `off` (default) | every call goes to the server; nothing is written | trying a pack, scoring a changed index |
+| `record` | an answer already stored is reused, any other call goes to the server and is stored | building a cache while replaying or scoring |
+| `replay` | stored answers only; a call that was never recorded is an error for that call | baselines, `check` in CI, air-gapped re-runs |
+
+The cache holds the server's **raw** answers, one JSON file per server, tool and arguments,
+in `.cache/` inside the pack (or `dir:`, relative to the pack). The guard runs on every read,
+so a cached answer never shows the agent more than a live one would, and a server error is
+never stored. `REPLAYBOOK_KNOWLEDGE_CACHE` overrides the mode and
+`REPLAYBOOK_KNOWLEDGE_CACHE_DIR` the directory (a subdirectory per pack), for example to
+replay in CI from a cache recorded elsewhere.
+
+`off` is the default because the cache is raw ticket text on disk, including tickets the
+guard never lets through: keeping it is a decision about your data, so it is yours to make.
+Treat a cache like the dataset it came from (the repository's `.gitignore` ignores `.cache/`).
+A typical flow: `cache: record` for the first replay or eval, then `cache: replay` once the
+baseline is approved, so `check` compares the agent, not the index.
+
+## What a run records
+
+Every run records the knowledge packs it could read in its environment (`results.json`):
+the server, the transport, the cache mode and, for `record` and `replay`, a SHA-256 of the
+cache. The evidence pack lists each one under its limitations: a live index (`off` or
+`record`) "may have changed since, so a re-run can see different search results"; pinned
+answers (`replay`) name the cache digest, so a reviewer can tell whether two runs saw the
+same answers. Both state that the server's ranking was not checked by the guard.
+
 Tool errors your server returns as data (`{"ok": false, "error": ...}`) reach the agent as
 an error; a server that cannot be reached is an error for that call, never a crash.
 
@@ -140,15 +178,23 @@ uv run replaybook knowledge eval --data data/warehouse --source builtin --source
 - **Query**: the ticket as filed, summary and description (`--query-chars`, default 1000).
 - **Search**: at the ticket's creation time, through the guard. `builtin` is Replaybook's
   own keyword search over the dataset: the baseline to beat.
-- **Scores** at k: hit rate (any related ticket in the top k), recall, MRR, nDCG, and how
-  often a known duplicate was found; latency per search; and, per knowledge pack, the
-  leaks the guard removed (the ticket itself, later tickets, undated results).
+- **Scores** at k: hit rate (any related ticket in the top k) with its 95% Wilson interval,
+  recall, MRR, nDCG, and how often a known duplicate was found; latency per search; and,
+  per knowledge pack, the leaks the guard removed (the ticket itself, later tickets,
+  undated results).
+- **Comparison**: every source after the first is compared with the first ticket by ticket:
+  on how many tickets it ranked the first related ticket higher, lower or the same, with an
+  exact sign test. Put the baseline first (`--source builtin --source ticket_rag`, or the
+  current setting before the new one); a p below 0.05 means the difference is unlikely to be
+  luck on this sample.
 
 It writes `retrieval.md` (the table above, side by side for every source), `retrieval.json`
 and `cases_<source>.jsonl` with every ticket's related tickets, what came back and what was
 found. Links are never complete, so absolute numbers are lower bounds: compare sources, or
 one source before and after a change (a new embedding model, a recency setting), on the
-same cases. The same eval is the `replaybook_knowledge_eval` tool of `replaybook mcp`.
+same cases. To compare one server before and after a change, keep two copies of the pack
+under different names, one pointing at each version, and score both in one run with the
+current one first. The pack's cache mode applies to the eval as it does to a replay. The same eval is the `replaybook_knowledge_eval` tool of `replaybook mcp`.
 
 ## Replaying an agent with it
 
@@ -162,10 +208,10 @@ to your tool packs) and every door sees it.
 - The tool fingerprint covers the pack's tools, so adding or changing a knowledge pack
   changes the baseline, as it should.
 
-Your server is live: its index changes daily, so two replays a week apart can see different
-search results for the same case. The call record keeps exactly what the agent saw in each
-run. In air-gapped mode the server's host must be in `REPLAYBOOK_ALLOWED_HOSTS`; a stdio
-server is a child process and is governed by the container's network instead.
+Each call record keeps exactly what the agent saw; pin the answers across runs with
+`cache: replay` (above). In air-gapped mode the server's host must be in
+`REPLAYBOOK_ALLOWED_HOSTS`; a stdio server is a child process and is governed by the
+container's network instead, and a pack in `replay` mode needs no network at all.
 
 ## Worked example
 

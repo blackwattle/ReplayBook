@@ -56,13 +56,27 @@ tool list in tools.json (`replaybook knowledge import` writes both):
           timed: {comments: created}
           remove: [links, updated]
 
+A live index changes every day, so two runs can see different answers. `cache:` pins them:
+
+      cache: off        # the default: every call goes to the server, nothing is written
+      cache: record     # reuse a stored answer, otherwise ask the server and store it
+      cache: replay     # stored answers only; a call never stored is an error
+      cache: {mode: record, dir: .cache}   # dir is relative to the pack (default .cache)
+
+The cache holds the server's raw answers, so the guard runs on every read and a cached
+answer can never leak more than a live one. REPLAYBOOK_KNOWLEDGE_CACHE overrides the mode
+and REPLAYBOOK_KNOWLEDGE_CACHE_DIR the directory (a subdirectory per pack). `off` is the
+default because the cache is raw ticket text on disk, which a team should choose to keep.
+
 `docs/knowledge-sources.md` explains each field. Values may name environment variables as
 ${NAME}; secrets belong in `.env`, never in pack.yaml.
 """
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import os
 import re
 import threading
@@ -81,6 +95,9 @@ if TYPE_CHECKING:
 
 ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 AS_OF_FORMATS = ("datetime", "date")
+CACHE_MODES = ("off", "record", "replay")
+CACHE_MODE_ENV = "REPLAYBOOK_KNOWLEDGE_CACHE"
+CACHE_DIR_ENV = "REPLAYBOOK_KNOWLEDGE_CACHE_DIR"
 DEFAULT_LIMIT = 10
 GUARD_NOTE = (
     "Only tickets created before the current ticket are visible, as they stood then; the "
@@ -148,6 +165,89 @@ class ServerSpec:
         if self.url:
             return self.url.split("?", 1)[0]
         return " ".join(self.command)
+
+
+@dataclass(frozen=True)
+class CacheSpec:
+    """Whether and where the server's raw answers are kept (see the module docstring)."""
+
+    mode: str = "off"
+    dir: Path | None = None
+
+    @classmethod
+    def parse(cls, data: Any, base: Path) -> CacheSpec:
+        # YAML reads a bare `off` as false and `on` as true.
+        if isinstance(data, dict):
+            mode, directory = data.get("mode"), data.get("dir")
+        elif data is None or isinstance(data, str | bool):
+            mode, directory = data, None
+        else:
+            raise KnowledgeSpecError("knowledge.cache must be a mode or {mode, dir}")
+        if mode is None or mode is False:
+            mode = "off"
+        elif mode is True:
+            mode = "record"
+        mode = str(mode)
+        if mode not in CACHE_MODES:
+            raise KnowledgeSpecError(f"knowledge.cache must be one of {', '.join(CACHE_MODES)}")
+        return cls(mode, (base / str(directory)) if directory else base / ".cache")
+
+    def effective(self, pack_name: str) -> CacheSpec:
+        """This spec with the environment's overrides applied."""
+        mode = os.environ.get(CACHE_MODE_ENV, "").strip() or self.mode
+        if mode not in CACHE_MODES:
+            raise KnowledgeSpecError(f"{CACHE_MODE_ENV} must be one of {', '.join(CACHE_MODES)}")
+        root = os.environ.get(CACHE_DIR_ENV, "").strip()
+        directory = Path(root).expanduser() / pack_name if root else self.dir
+        return CacheSpec(mode, directory.resolve() if directory else None)
+
+
+class ResponseCache:
+    """The server's raw answers on disk, one JSON file per (server, tool, arguments)."""
+
+    def __init__(self, spec: CacheSpec, server: str) -> None:
+        self.mode = spec.mode
+        self.dir = spec.dir
+        self.server = server
+
+    def key(self, tool: str, args: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {"server": self.server, "tool": tool, "args": args}, sort_keys=True, default=str
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _path(self, key: str) -> Path:
+        assert self.dir is not None
+        return self.dir / key[:2] / f"{key}.json"
+
+    def get(self, tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
+        if self.mode == "off" or self.dir is None:
+            return None
+        path = self._path(self.key(tool, args))
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))["response"]
+
+    def put(self, tool: str, args: dict[str, Any], response: dict[str, Any]) -> None:
+        if self.mode != "record" or self.dir is None:
+            return
+        path = self._path(self.key(tool, args))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {"tool": tool, "args": args, "response": response}
+        temporary = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+        temporary.write_text(json.dumps(record, sort_keys=True, default=str), encoding="utf-8")
+        os.replace(temporary, path)  # atomic: parallel mock servers may record the same call
+
+
+def cache_digest(directory: Path | None) -> str | None:
+    """SHA-256 over every stored answer (names and contents), or None without a cache."""
+    if directory is None or not directory.is_dir():
+        return None
+    digest = hashlib.sha256()
+    for path in sorted(directory.rglob("*.json")):
+        digest.update(path.relative_to(directory).as_posix().encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -232,6 +332,7 @@ class KnowledgeSpec:
     tools: dict[str, ToolSpec]
     search: str | None = None
     lookup: str | None = None
+    cache: CacheSpec = field(default_factory=CacheSpec)
 
     @classmethod
     def parse(cls, data: Any, base: Path) -> KnowledgeSpec:
@@ -258,7 +359,13 @@ class KnowledgeSpec:
                 f"{', '.join(needs_lookup)} take a ticket id; name a lookup tool "
                 "(knowledge.lookup) so the guard can check that ticket is visible"
             )
-        return cls(ServerSpec.parse(data.get("server"), base), tools, search, lookup)
+        return cls(
+            ServerSpec.parse(data.get("server"), base),
+            tools,
+            search,
+            lookup,
+            CacheSpec.parse(data.get("cache"), base),
+        )
 
     def check_tools(self, listed: list[dict[str, Any]]) -> list[str]:
         """Problems between this spec and the server's tool list (empty when they fit)."""
@@ -511,10 +618,32 @@ def requested_limit(spec: ToolSpec, args: dict[str, Any], schema: dict[str, Any]
 class GuardedSource:
     """A knowledge pack's server and spec: calls a tool with the guard around it."""
 
-    def __init__(self, spec: KnowledgeSpec, tools: list[dict[str, Any]], remote: Any) -> None:
+    def __init__(
+        self,
+        spec: KnowledgeSpec,
+        tools: list[dict[str, Any]],
+        remote: Any,
+        cache: ResponseCache | None = None,
+    ) -> None:
         self.spec = spec
         self.listed = {str(t["name"]): t for t in tools}
         self.remote = remote
+        self.cache = cache or ResponseCache(CacheSpec(), spec.server.describe())
+
+    def fetch(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """The server's raw answer: from the cache when it has one, else from the server."""
+        cached = self.cache.get(name, args)
+        if cached is not None:
+            return cached
+        if self.cache.mode == "replay":
+            raise ToolError(
+                "no recorded answer for this call (knowledge cache in replay mode); record it "
+                "first with cache: record"
+            )
+        response = self.remote.call(name, args)
+        if not (response.get("error") or response.get("ok") is False):
+            self.cache.put(name, args, response)  # errors are not kept: record retries them
+        return response
 
     def schema(self, name: str) -> dict[str, Any]:
         tool = self.listed.get(name) or {}
@@ -532,7 +661,7 @@ class GuardedSource:
             args[spec.limit_arg] = spec.max_limit
         if spec.as_of_arg:
             args[spec.as_of_arg] = as_of_value(spec, horizon)
-        result = self.remote.call(name, args)
+        result = self.fetch(name, args)
         return guard_result(spec, result, horizon, exclude, limit)
 
     def _check_visible(
@@ -545,7 +674,7 @@ class GuardedSource:
         assert self.spec.lookup is not None  # KnowledgeSpec.parse insists
         lookup = self.spec.tools[self.spec.lookup]
         assert lookup.ticket_arg is not None
-        found = self.remote.call(lookup.name, {lookup.ticket_arg: ticket_id})
+        found = self.fetch(lookup.name, {lookup.ticket_arg: ticket_id})
         guard_result(lookup, found, horizon, exclude)  # raises ToolError when not visible
 
     def search(
@@ -616,8 +745,26 @@ def source_for(pack: Pack) -> GuardedSource:
             problems = spec.check_tools(tools)
             if problems:
                 raise KnowledgeSpecError(f"pack '{pack.name}': " + "; ".join(problems))
-            _sources[key] = GuardedSource(spec, tools, RemoteServer(spec.server))
+            cache = ResponseCache(spec.cache.effective(pack.name), spec.server.describe())
+            _sources[key] = GuardedSource(spec, tools, RemoteServer(spec.server), cache)
         return _sources[key]
+
+
+def describe_packs(packs: list[Pack]) -> dict[str, dict[str, Any]]:
+    """What a run records about the knowledge packs it could read: where each server is,
+    whether its answers were live or pinned, and a digest of the pinned answers."""
+    described: dict[str, dict[str, Any]] = {}
+    for pack in packs:
+        if pack.knowledge is None:
+            continue
+        cache = pack.knowledge.cache.effective(pack.name)
+        described[pack.name] = {
+            "server": pack.knowledge.server.describe(),
+            "transport": pack.knowledge.server.transport,
+            "cache": cache.mode,
+            "cache_sha256": cache_digest(cache.dir) if cache.mode != "off" else None,
+        }
+    return described
 
 
 def forget() -> None:
