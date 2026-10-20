@@ -1,0 +1,59 @@
+# Scores a knowledge pack's search quality on a schedule and on demand.
+#
+# `replaybook knowledge eval` imports your past tickets from a Postgres table and scores
+# the pack's search against the builtin keyword baseline on the same cases: for each
+# ticket, does the search (run at that ticket's creation time, behind the guard) find the
+# earlier tickets engineers linked or mentioned?
+#
+# Copy to .github/workflows/knowledge-eval.yml in your repository.
+# See docs/knowledge-sources.md and docs/ticket-sources.md for setup details.
+#
+# The published image does not include psycopg (the postgres optional dependency).
+# It is installed from the standard PyPI index in the import-and-score step.
+
+name: knowledge-eval
+
+on:
+  schedule:
+    - cron: "0 4 * * *"    # daily at 04:00 UTC; adjust to suit
+  workflow_dispatch:        # run manually from the Actions tab
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    container:
+      image: blackwattle/replaybook:a373ce2
+    env:
+      KNOWLEDGE_PACK_NAME: my_pack       # the name key from packs/my_pack/pack.yaml
+      KNOWLEDGE_MAPPING: mapping/tickets.yaml
+      REPLAYBOOK_PACKS: ${{ github.workspace }}/packs
+      REPLAYBOOK_AIRGAPPED: "false"
+      KNOWLEDGE_EVAL_OUT: ${{ github.workspace }}/retrieval
+      KNOWLEDGE_EVAL_DATA: ${{ github.workspace }}/data/tickets
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import tickets and score
+        env:
+          POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}   # postgresql://user:pass@host/db
+        run: |
+          pip install --quiet "psycopg[binary]"
+          replaybook postgres import --mapping "$KNOWLEDGE_MAPPING" --out "$KNOWLEDGE_EVAL_DATA"
+          replaybook knowledge eval \
+            --data "$KNOWLEDGE_EVAL_DATA" \
+            --source builtin \
+            --source "$KNOWLEDGE_PACK_NAME" \
+            --out "$KNOWLEDGE_EVAL_OUT" \
+            --workers 4
+          grep -E "${KNOWLEDGE_PACK_NAME}:|Hit@5|builtin:" "$KNOWLEDGE_EVAL_OUT/retrieval.md" | head -5
+
+      - name: Remove imported ticket data
+        if: always()
+        run: rm -rf "$KNOWLEDGE_EVAL_DATA"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: knowledge-eval-${{ github.sha }}
+          path: retrieval/
+          retention-days: 90
