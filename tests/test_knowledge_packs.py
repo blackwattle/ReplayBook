@@ -536,6 +536,50 @@ def test_eval_compares_builtin_and_the_pack(
     assert bad.exit_code != 0 and "not a knowledge pack" in bad.output
 
 
+@pytest.mark.parametrize("agent", ["", "skill"])
+def test_knowledge_eval_invalid_pack_is_a_usage_error(
+    small_dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent: str
+) -> None:
+    from replaybook import workflow
+
+    pack_dir = tmp_path / "packs" / "broken"
+    pack_dir.mkdir(parents=True)
+    (pack_dir / "pack.yaml").write_text(
+        yaml.safe_dump({"name": "broken", "knowledge": {"server": {"command": ["unused"]}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(packs.ENV_VAR, str(pack_dir.parent))
+    packs.reset()
+    out = tmp_path / "retrieval"
+    with pytest.raises(
+        workflow.WorkflowError, match=r"knowledge\.tools must list at least one tool"
+    ):
+        workflow.knowledge_eval(
+            data=small_dataset,
+            sources=["broken"],
+            out=out,
+            agent=agent,
+            request_type="broken_research",
+        )
+    args = [
+        "knowledge",
+        "eval",
+        "--data",
+        str(small_dataset),
+        "--source",
+        "broken",
+        "--out",
+        str(out),
+    ]
+    if agent:
+        args += ["--agent", agent, "--type", "broken_research"]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2, result.output
+    assert "knowledge.tools" in result.output
+    assert "Traceback" not in result.output
+    assert not out.exists()
+
+
 # --- import and check ---------------------------------------------------------------------
 
 
