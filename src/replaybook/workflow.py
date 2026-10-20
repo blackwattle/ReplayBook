@@ -9,6 +9,7 @@ Replaybook. Nothing here prints, and nothing here knows about typer or MCP.
 from __future__ import annotations
 
 import shlex
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -750,6 +751,7 @@ def knowledge_eval(
     request_type: str = "",
     command: str = "",
     transport: str = "stdio",
+    progress: Callable[[str, int, int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Score past-ticket search (builtin and/or knowledge packs, and optionally an agent that
     researches each ticket) against the tickets each ticket's links and comments point to,
@@ -786,6 +788,7 @@ def knowledge_eval(
             workers=workers,
             agent=agent_under_test,
             agent_name=agent,
+            progress=progress,
         )
     except (PackError, ValueError) as exc:
         raise WorkflowError(str(exc)) from exc
