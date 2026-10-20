@@ -53,6 +53,26 @@ MIN_PASS_RATE_HELP = (
 )
 
 
+ENV_FILE_HELP = (
+    "JSON file of settings for this server (packs, knowledge cache, air gap, the variables a "
+    "knowledge pack refers to), written per case by the external adapter and launchers."
+)
+
+
+def apply_env_file(path: Path | None) -> None:
+    """Load the per-case server settings before any pack is loaded."""
+    if path is None:
+        return
+    import json
+
+    from replaybook import netguard, packs
+
+    settings = json.loads(Path(path).read_text(encoding="utf-8"))
+    os.environ.update({str(k): str(v) for k, v in settings.items()})
+    packs.reset()
+    netguard.install_from_env()
+
+
 def run_workflow(fn: Callable[..., dict[str, Any]], *args: Any, **kwargs: Any) -> dict[str, Any]:
     """Call a workflow function and print its message; bad arguments become usage errors."""
     from replaybook.workflow import WorkflowError
@@ -336,12 +356,14 @@ def mock_server(
     ] = False,
     host: Annotated[str, typer.Option(help="Bind address for --http.")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port for --http; 0 takes a free one.")] = 0,
+    env_file: Annotated[Path | None, typer.Option(help=ENV_FILE_HELP)] = None,
 ) -> None:
     """Run the mock MCP servers for an agent in another process: over stdio (default) or over
     streamable HTTP (--http). With --http the URL is printed as `REPLAYBOOK_LISTENING <url>`
     once the port is bound. In air-gapped mode the client side must allowlist the host."""
     from replaybook.mock_env.serve import serve_http, serve_stdio
 
+    apply_env_file(env_file)
     if http:
         serve_http([server], world, record, knowledge, host=host, port=port, announce=typer.echo)
     else:
@@ -357,6 +379,7 @@ def tool_endpoint(
     ] = None,
     host: Annotated[str, typer.Option(help="Bind address.")] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port; 0 takes a free one.")] = 0,
+    env_file: Annotated[Path | None, typer.Option(help=ENV_FILE_HELP)] = None,
 ) -> None:
     """Serve the mock tools to frameworks that use provider-native function calling instead of
     MCP: GET /tools lists them as JSON Schema, POST /tools/<name> calls one. Every call is
@@ -364,6 +387,7 @@ def tool_endpoint(
     from replaybook.mock_env.http_tools import serve_tools
     from replaybook.mock_env.serve import build_environment
 
+    apply_env_file(env_file)
     env = build_environment(None, world, record, knowledge)
     serve_tools(env, host=host, port=port, announce=typer.echo)
 
@@ -679,14 +703,44 @@ def knowledge_eval(
         int, typer.Option(help="Characters of summary and description used as the query.")
     ] = 1000,
     workers: Annotated[int, typer.Option(help="Searches in parallel.")] = 4,
+    agent: Annotated[
+        str,
+        typer.Option(
+            help="Also score an agent that researches each ticket: skill, external or a "
+            "launcher. It cites the earlier tickets it relied on in a ticket_comment."
+        ),
+    ] = "",
+    request_type: Annotated[
+        str,
+        typer.Option(
+            "--type", help="The research request type the agent follows (e.g. <pack>_research)."
+        ),
+    ] = "",
+    command: Annotated[str, typer.Option(help=COMMAND_HELP)] = "",
+    transport: Annotated[str, typer.Option(help=TRANSPORT_HELP)] = "stdio",
 ) -> None:
     """Score past-ticket search against history: for each ticket, does the search (run at the
     ticket's creation time, behind the guard) find the earlier tickets engineers linked or
-    mentioned? Writes retrieval.md, retrieval.json and the per-ticket results."""
+    mentioned? With --agent, an agent researches each ticket with every search tool it is
+    given and is scored on what it cites. Writes retrieval.md, retrieval.json and the
+    per-ticket results."""
     from replaybook import workflow
 
     run_workflow(
-        workflow.knowledge_eval, data, source, out, n, k, since, until, query_chars, workers
+        workflow.knowledge_eval,
+        data,
+        source,
+        out,
+        n,
+        k,
+        since,
+        until,
+        query_chars,
+        workers,
+        agent,
+        request_type,
+        command,
+        transport,
     )
 
 

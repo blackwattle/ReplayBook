@@ -746,3 +746,176 @@ def test_eval_reports_intervals_and_a_ticket_by_ticket_comparison(
     assert "Hit@5 (95% CI)" in markdown and "Ticket by ticket against builtin" in markdown
     assert retrieval.sign_test(10, 0) == pytest.approx(2 / 1024)
     assert retrieval.sign_test(3, 3) == 1.0 and retrieval.sign_test(0, 0) == 1.0
+
+
+# --- other organisations' setups -----------------------------------------------------------
+
+
+# A throwaway self-signed CA certificate (no key kept anywhere): something for
+# ssl.create_default_context to load.
+TEST_CA = """-----BEGIN CERTIFICATE-----
+MIIBkTCCATegAwIBAgIUKHiV5lbhUvEyYeo1adrJDXaptvwwCgYIKoZIzj0EAwIw
+HTEbMBkGA1UEAwwSUmVwbGF5Ym9vayB0ZXN0IENBMCAXDTI2MTAyMDAzMTE0NFoY
+DzIxMjYwOTI2MDMxMTQ0WjAdMRswGQYDVQQDDBJSZXBsYXlib29rIHRlc3QgQ0Ew
+WTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASA3HOsm7gnMw4LXWxOyJ++YZsOvQz8
++H9He5Wbl8hp0NN1lFZNoF6ET9RLQaoCAeySf6oVj3zUzGf8QnUxinH4o1MwUTAd
+BgNVHQ4EFgQU6HdHhYNPxePNgg5DOrGMLW3jVRAwHwYDVR0jBBgwFoAU6HdHhYNP
+xePNgg5DOrGMLW3jVRAwDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNIADBF
+AiBz0kmq3Qh4kYLm3lR/IcvE3MNVBQWH2pBlq+AaqwlPLgIhAMeMJiFMgixHHbny
+bXx5rENctqcRNW7IkaSzjcFMrgsP
+-----END CERTIFICATE-----
+"""
+
+
+def test_ca_bundle_for_a_server_behind_a_private_certificate_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ssl
+
+    with pytest.raises(KnowledgeSpecError, match="url only"):
+        ServerSpec.parse({"command": ["python"], "ca_bundle": "ca.pem"}, tmp_path)
+    spec = ServerSpec.parse({"url": "https://rag.internal/mcp", "ca_bundle": "ca.pem"}, tmp_path)
+    with pytest.raises(KnowledgeSpecError, match="no file at"):
+        spec.ca_path()
+    (tmp_path / "ca.pem").write_text(TEST_CA, encoding="utf-8")
+    assert spec.ca_path() == tmp_path / "ca.pem"
+    monkeypatch.setenv("RAG_CA", str(tmp_path / "ca.pem"))
+    from_env = ServerSpec.parse(
+        {"url": "https://rag.internal/mcp", "ca_bundle": "${RAG_CA}"}, Path("/")
+    )
+    assert from_env.ca_path() == tmp_path / "ca.pem"
+    loaded: list[str] = []
+    real = ssl.create_default_context
+
+    def spy(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        loaded.append(str(kwargs.get("cafile")))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ssl, "create_default_context", spy)
+    client = RemoteServer(spec)._http_client()
+    asyncio.run(client.aclose())
+    assert str(tmp_path / "ca.pem") in loaded
+    plain = RemoteServer(ServerSpec.parse({"url": "https://rag.example/mcp"}, tmp_path))
+    loaded.clear()
+    asyncio.run(plain._http_client().aclose())
+    assert str(tmp_path / "ca.pem") not in loaded, "no bundle named, the default trust store"
+
+
+def test_servers_started_by_someone_else_get_their_settings_from_a_private_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agents and harnesses start mock servers with their own, minimal environment; the
+    settings travel in a per-case file whose path, not contents, is in the arguments."""
+    from replaybook.agents.external import case_files, server_environment
+    from replaybook.cli import apply_env_file
+
+    tickets, under_test = _seeded()
+    _install(tmp_path, monkeypatch, tickets)
+    monkeypatch.setenv("TICKET_RAG_DATA", "/data/tickets")
+    monkeypatch.setenv("REPLAYBOOK_MODEL_API_KEY", "not-for-mock-servers")
+    monkeypatch.chdir(tmp_path)
+    settings = server_environment()
+    assert settings["TICKET_RAG_DATA"] == "/data/tickets", "a variable the pack refers to"
+    assert "REPLAYBOOK_MODEL_API_KEY" not in settings, "nothing a mock server does not need"
+    assert all(Path(p).is_absolute() for p in settings["REPLAYBOOK_PACKS"].split(os.pathsep))
+    env = MockEnvironment(WorldState.from_ticket(under_test, {}))
+    with case_files(env) as files:
+        assert files.env_path.is_file()
+        if os.name == "posix":
+            assert files.env_path.stat().st_mode & 0o777 == 0o600
+        args = files.mcp_servers()["ticket_rag"]["args"]
+        assert args[args.index("--env-file") + 1] == str(files.env_path)
+        assert "/data/tickets" not in json.dumps(files.mcp_servers())
+        monkeypatch.delenv("TICKET_RAG_DATA")
+        apply_env_file(files.env_path)
+        assert os.environ["TICKET_RAG_DATA"] == "/data/tickets"
+
+
+def test_import_writes_a_research_type_and_a_valid_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "packs"
+    result = CliRunner().invoke(
+        app,
+        [
+            "knowledge",
+            "import",
+            "--name",
+            "rag",
+            "--json",
+            str(EXAMPLE_PACK / "tools.json"),
+            "--out",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    skill = (out / "rag" / "skills" / "research" / "SKILL.md").read_text(encoding="utf-8")
+    assert "request_type: rag_research" in skill and "`search_tickets`" in skill
+    monkeypatch.setenv(packs.ENV_VAR, str(out))
+    packs.reset()
+    validated = CliRunner().invoke(app, ["skills", "validate"])
+    assert validated.exit_code == 0 and "rag_research" in validated.output, validated.output
+
+
+def test_agent_researches_each_ticket_behind_the_guard(
+    small_dataset: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The external research agent runs as its own process and starts its own mock servers
+    (which start the example search server); it is scored on the ids it cites."""
+    monkeypatch.setenv(
+        packs.ENV_VAR, os.pathsep.join([str(ROOT / "packs"), str(EXAMPLE / "packs")])
+    )
+    monkeypatch.setenv("TICKET_RAG_DATA", str(small_dataset))
+    packs.reset()
+    out = tmp_path / "out"
+    command = f'"{sys.executable}" "{EXAMPLE / "research_agent.py"}"'
+    result = CliRunner().invoke(
+        app,
+        [
+            "knowledge",
+            "eval",
+            "--data",
+            str(small_dataset),
+            "--source",
+            "ticket_rag",
+            "--agent",
+            "external",
+            "--type",
+            "ticket_research",
+            "--command",
+            command,
+            "--n",
+            "3",
+            "--k",
+            "5",
+            "--out",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    report = json.loads((out / "retrieval.json").read_text(encoding="utf-8"))
+    agent = report["sources"]["agent-external"]
+    assert agent["errors"] == 0, agent["first_errors"]
+    assert agent["agent"]["tool_calls_mean"] == 3.0 and agent["agent"]["unseen_citations"] == 0
+    assert report["agent"]["agent"] == "external"
+    created = {
+        t["id"]: t["created"]
+        for t in map(
+            json.loads, (small_dataset / "tickets.jsonl").read_text(encoding="utf-8").splitlines()
+        )
+    }
+    for line in (out / "cases_agent-external.jsonl").read_text(encoding="utf-8").splitlines():
+        case = json.loads(line)
+        assert case["returned"], "the agent cited what the search returned"
+        assert all(created[r] < created[case["ticket_id"]] for r in case["returned"])
+    for bad, why in ((["--agent", "scripted"], "scripted"), (["--agent", "skill"], "--type")):
+        refused = CliRunner().invoke(
+            app, ["knowledge", "eval", "--data", str(small_dataset), *bad, "--out", str(out)]
+        )
+        assert refused.exit_code != 0 and why in refused.output
+
+
+def test_citations_are_dataset_ids_in_order_without_the_ticket_itself() -> None:
+    known = {"ops-1": "OPS-1", "ops-2": "OPS-2", "ops-3": "OPS-3"}
+    text = "Related: OPS-2, ops-1 (and OPS-9, OPS-3 again OPS-2); this is OPS-3"
+    assert retrieval.citations(text, known, exclude="OPS-3") == ["OPS-2", "OPS-1"]

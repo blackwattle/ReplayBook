@@ -28,6 +28,7 @@ tool list in tools.json (`replaybook knowledge import` writes both):
         url: ${TICKET_RAG_URL}                 # streamable HTTP, or
         command: [python, server.py]           # stdio, started in the pack directory
         headers: {Authorization: "Bearer ${TICKET_RAG_TOKEN}"}
+        ca_bundle: certs/internal-ca.pem       # optional: a private CA for an HTTPS url
         env: {}                                # extra environment for a stdio server
         timeout_s: 60
       search: search_tickets                   # the tool `replaybook knowledge eval` scores
@@ -136,6 +137,7 @@ class ServerSpec:
     env: dict[str, str] = field(default_factory=dict)
     cwd: Path | None = None
     timeout_s: float = 60.0
+    ca_bundle: str = ""
 
     @classmethod
     def parse(cls, data: Any, base: Path) -> ServerSpec:
@@ -147,6 +149,9 @@ class ServerSpec:
             command = (command,)
         if bool(url) == bool(command):
             raise KnowledgeSpecError("knowledge.server needs exactly one of url or command")
+        ca_bundle = str(data.get("ca_bundle") or "")
+        if ca_bundle and not url:
+            raise KnowledgeSpecError("knowledge.server.ca_bundle applies to a url only")
         return cls(
             url=url,
             command=tuple(str(c) for c in command),
@@ -154,7 +159,19 @@ class ServerSpec:
             env={str(k): str(v) for k, v in (data.get("env") or {}).items()},
             cwd=base,
             timeout_s=float(data.get("timeout_s") or 60.0),
+            ca_bundle=ca_bundle,
         )
+
+    def ca_path(self) -> Path | None:
+        """The CA bundle to trust for the url, resolved against the pack directory."""
+        if not self.ca_bundle:
+            return None
+        path = Path(expand_env(self.ca_bundle)).expanduser()
+        if not path.is_absolute() and self.cwd is not None:
+            path = self.cwd / path
+        if not path.is_file():
+            raise KnowledgeSpecError(f"knowledge.server.ca_bundle: no file at {path}")
+        return path
 
     @property
     def transport(self) -> str:

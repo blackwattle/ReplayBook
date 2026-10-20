@@ -56,8 +56,10 @@ uv run replaybook knowledge import --name ticket_rag --command "python rag_serve
 ```
 
 The import lists the server's tools (the only call it makes) and writes
-`packs/ticket_rag/tools.json` with the read-only tools and `packs/ticket_rag/pack.yaml` with
-a guard section guessed from the argument names. It cannot know where your server keeps
+`packs/ticket_rag/tools.json` with the read-only tools, `packs/ticket_rag/pack.yaml` with a
+guard section guessed from the argument names, and a research request type
+(`ticket_rag_research`) with its skill in `skills/research/SKILL.md`: the task an agent gets
+in `knowledge eval --agent` (below). It cannot know where your server keeps
 the ticket id or the dates, so those say `CHANGE_ME`. Run a check with a query to see a
 real result's fields:
 
@@ -81,6 +83,7 @@ knowledge:
     url: ${TICKET_RAG_URL}            # streamable HTTP, or
     command: [python, server.py]      # stdio, started in the pack directory
     headers: {Authorization: "Bearer ${TICKET_RAG_TOKEN}"}
+    ca_bundle: certs/internal-ca.pem  # optional: a private CA for an HTTPS url (or ${VAR})
     env: {}                           # extra environment for a stdio server
     timeout_s: 60
   cache: off                          # off | record | replay, or {mode: record, dir: .cache}
@@ -150,6 +153,10 @@ cache. The evidence pack lists each one under its limitations: a live index (`of
 answers (`replay`) name the cache digest, so a reviewer can tell whether two runs saw the
 same answers. Both state that the server's ranking was not checked by the guard.
 
+**Behind a private certificate authority or a proxy?** `ca_bundle` names the CA file to
+trust for the server's HTTPS url (relative to the pack, or `${VARIABLE}`); the usual
+`HTTPS_PROXY`, `NO_PROXY` and `SSL_CERT_FILE` variables are honoured as well.
+
 Tool errors your server returns as data (`{"ok": false, "error": ...}`) reach the agent as
 an error; a server that cannot be reached is an error for that call, never a crash.
 
@@ -188,6 +195,27 @@ uv run replaybook knowledge eval --data data/warehouse --source builtin --source
   current setting before the new one); a p below 0.05 means the difference is unlikely to be
   luck on this sample.
 
+### Scoring an agent that searches
+
+A search tool is only half of it: an agent decides what to search for, searches again,
+opens tickets and decides what to trust. `--agent` adds an agent under test as one more
+source, on the same cases:
+
+```bash
+uv run replaybook knowledge eval --data data/warehouse --source builtin --source ticket_rag \
+    --agent skill --type ticket_rag_research --out retrieval
+```
+
+The agent (the built-in `skill` agent with a model, `external` with `--command`, or any
+launcher such as `claude-code` or `opencode`) works each ticket in the mock environment,
+with Replaybook's own knowledge tools and every knowledge pack behind the guard, following
+the research skill of `--type`: search, read, then one `ticket_comment` that cites the
+earlier tickets it relied on. The ids it cites, in order, are scored like a search's
+results. The report adds what only an agent does: tool calls per ticket, ids it cited that
+no tool ever returned to it (made-up citations), and its model calls and cost.
+`examples/ticket_rag/research_agent.py` is a tiny external agent that does this without a
+model, for trying the plumbing.
+
 It writes `retrieval.md` (the table above, side by side for every source), `retrieval.json`
 and `cases_<source>.jsonl` with every ticket's related tickets, what came back and what was
 found. Links are never complete, so absolute numbers are lower bounds: compare sources, or
@@ -202,7 +230,12 @@ A knowledge pack is a pack like any other: put its directory on `REPLAYBOOK_PACK
 to your tool packs) and every door sees it.
 
 - External agents and launchers get one more MCP server in their config (the pack's name);
-  `replaybook mock-server --server ticket_rag` serves it over stdio or `--http`.
+  `replaybook mock-server --server ticket_rag` serves it over stdio or `--http`. Agents and
+  harnesses start mock servers with an environment of their own choosing, so the settings
+  a mock server needs (`REPLAYBOOK_PACKS`, the cache and air-gap settings, and the
+  variables the pack refers to as `${NAME}`) travel in a per-case file readable by its
+  owner only, removed with the case; only its path is in the server's arguments. Give the
+  variables a stdio command uses absolute paths: the server may start in another directory.
 - The built-in skill agent is offered every knowledge pack's tools beside the built-in
   `knowledge_search_tickets`.
 - The tool fingerprint covers the pack's tools, so adding or changing a knowledge pack

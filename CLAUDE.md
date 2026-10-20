@@ -58,8 +58,9 @@ evidence pack reports the shadow results in their own section.
 - `src/replaybook/adapters/` ticket sources: synthetic, tabular (csv/jsonl/json with a mapping), postgres, public_jira, jira_cloud, servicenow; `effort.py` applies the effort source; `jira_issue.py` is the shared Jira conversion
 - `src/replaybook/mock_env/guarded.py`, `remote.py` knowledge packs: a team's own read-only past-ticket search server (`knowledge:` in pack.yaml, tools.json) served behind the time-travel guard; `remote.py` is the one connection to it
 - `src/replaybook/knowledge_pack.py` `replaybook knowledge import` (a knowledge pack skeleton from a server's tool list) and `knowledge check` (validate, probe through the guard)
-- `src/replaybook/eval/retrieval.py` `replaybook knowledge eval`: scores past-ticket search (builtin or a knowledge pack) against the earlier tickets each ticket links to or mentions, at its creation time
+- `src/replaybook/eval/retrieval.py` `replaybook knowledge eval`: scores past-ticket search (builtin, a knowledge pack, or an agent following a research skill with `--agent`) against the earlier tickets each ticket links to or mentions, at its creation time
 - `src/replaybook/mock_env/` ticket tools, knowledge tools behind the time-travel guard, pack server hosting, generic recording mock, world state, call recorder, tool fingerprints; `serve.py` serves the mocks over stdio or streamable HTTP (one combined server, `mock-server --http`), `http_tools.py` is the function-calling door (`tools schema`, `tool-endpoint`)
+- `src/replaybook/agents/external.py` also writes each case's mock-server settings file (`--env-file`): harnesses start servers with their own minimal environment
 - `src/replaybook/agents/`   agents under test: scripted (with flaws, procedures from packs), LiteLLM skill agent, external subprocess adapter (transports stdio, http, tools); `parse.py` generic text helpers
 - `src/replaybook/llm/`      LiteLLM wrapper with spend cap, disk cache and offline fallback
 - `src/replaybook/eval/`     test-set builder, replay runner, scoring (the outcome classes), failure groups, accepted differences, baselines, sync, shadow, evidence pack; labels.py labels each case act or escalate and records the spot-check, golive.py is the go-live gate, live.py keeps the live runs a team's runtime reports and each skill's rolling rates; extract.py derives unverified expectations from real ticket text
@@ -68,7 +69,7 @@ evidence pack reports the shadow results in their own section.
 - `src/replaybook/sbom.py`   CycloneDX SBOM from uv.lock (needs the `sbom` dependency group)
 - `examples/payroll/`        a fake payroll MCP server, the overlay a person adds after the import, canonical tickets and their CSV form: the conformance test for a pack the core has never seen
 - `examples/external_agent/` a tiny external agent run through the subprocess adapter
-- `examples/ticket_rag/`     a fake past-ticket search server that leaks like a real one, and the knowledge pack that guards it
+- `examples/ticket_rag/`     a fake past-ticket search server that leaks like a real one, the knowledge pack that guards it (with a research skill), and a model-free research agent
 - `docs/ticket-sources.md`   column mappings for the csv/jsonl and postgres adapters (including links), ServiceNow notes, the as-of rule for RAG tables
 - `docs/knowledge-sources.md` knowledge packs: the guard rules, the pack.yaml reference, import/check/eval, the worked example
 - `docs/public-jira-findings.md` what broke on real tickets (Apache INFRA) and what changed because of it

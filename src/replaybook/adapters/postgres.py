@@ -30,6 +30,20 @@ import refuses unless told to proceed, and then warns in the terminal and the da
     engineers: [alice]
     effort: {source: status_time, working_statuses: [In Progress]}
 
+Any section may name a `query` instead of a `table`: a SELECT the mapping's author writes,
+for stores where the columns need shaping first (a constant reporter, a comment role from
+a flag, a join) and the import has read access only, so no view can be created. The
+columns then name the query's output columns, and `where` and `limit` apply around it:
+
+    tickets:
+      query: |
+        SELECT t.key, t.title, t.body, 'unknown' AS reporter, t.opened_at, t.state
+          FROM tickets t
+      columns: {id: key, summary: title, description: body, reporter: reporter,
+                created: opened_at, status: state}
+
+Every connection is read-only (the session refuses writes), whichever form is used.
+
 The driver (psycopg) is an optional extra: `uv sync --extra postgres`. Tests inject a fake
 fetcher and never open a connection. Air-gapped mode cannot see libpq's own sockets, so
 the database host is governed by the container network, not by REPLAYBOOK_ALLOWED_HOSTS.
@@ -59,9 +73,9 @@ class PostgresMapping:
         self.base = base
         self.dsn = _resolve_dsn(data.get("dsn"))
         tickets = data.get("tickets")
-        if not isinstance(tickets, dict) or "table" not in tickets or "columns" not in tickets:
+        if not isinstance(tickets, dict) or "columns" not in tickets:
             raise MappingError("mapping needs tickets: {table: ..., columns: {...}}")
-        self.tables: dict[str, str] = {"tickets": _check_table(str(tickets["table"]))}
+        self.tables: dict[str, str] = {"tickets": _source("tickets", tickets)}
         self.where = str(tickets.get("where") or "") or None
         self.limit = int(tickets["limit"]) if tickets.get("limit") else None
         self.allow_missing_history = bool(data.get("allow_missing_history", False))
@@ -70,7 +84,7 @@ class PostgresMapping:
             k: v for k, v in data.items() if k not in ("dsn", "tickets", "allow_missing_history")
         }
         shaped["tickets"] = {
-            "file": str(tickets["table"]),
+            "file": "query" if is_query(self.tables["tickets"]) else self.tables["tickets"],
             "columns": tickets["columns"],
             "list_separator": tickets.get("list_separator", ";"),
             "datetime_format": tickets.get("datetime_format"),
@@ -78,10 +92,10 @@ class PostgresMapping:
         for section in tabular.COMPANIONS:
             spec = data.get(section)
             if spec:
-                if "table" not in spec or "columns" not in spec:
-                    raise MappingError(f"{section} needs table and columns")
-                self.tables[section] = _check_table(str(spec["table"]))
-                shaped[section] = {"file": str(spec["table"]), "columns": spec["columns"]}
+                if "columns" not in spec:
+                    raise MappingError(f"{section} needs table (or query) and columns")
+                self.tables[section] = _source(section, spec)
+                shaped[section] = {"file": section, "columns": spec["columns"]}
         self.tabular = Mapping(shaped, base)
         if "status_changes" not in self.tables and not self.allow_missing_history:
             raise MappingError(
@@ -119,6 +133,27 @@ def _resolve_dsn(value: Any) -> str | None:
     return text
 
 
+QUERY_START = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+
+
+def is_query(source: str) -> bool:
+    """A section's source is a query (SELECT or WITH) rather than a table name."""
+    return bool(QUERY_START.match(source))
+
+
+def _source(section: str, spec: dict[str, Any]) -> str:
+    """The table name, checked, or the query, which must be a single SELECT or WITH."""
+    has_table, has_query = bool(spec.get("table")), bool(spec.get("query"))
+    if has_table == has_query:
+        raise MappingError(f"{section} needs exactly one of table or query")
+    if has_table:
+        return _check_table(str(spec["table"]))
+    query = str(spec["query"]).strip().rstrip(";").strip()
+    if not is_query(query) or ";" in query:
+        raise MappingError(f"{section}.query must be one SELECT (or WITH ... SELECT) statement")
+    return query
+
+
 def _check_table(name: str) -> str:
     parts = name.split(".")
     if len(parts) > 2 or not all(IDENTIFIER.match(p) for p in parts):
@@ -132,7 +167,8 @@ def quote(identifier: str) -> str:
 
 def build_query(table: str, columns: list[str], where: str | None, limit: int | None) -> str:
     cols = ", ".join(quote(c) for c in columns) if columns else "*"
-    sql = f"SELECT {cols} FROM {quote(table)}"
+    source = f"({table}) AS mapped" if is_query(table) else quote(table)
+    sql = f"SELECT {cols} FROM {source}"
     if where:
         sql += f" WHERE {where}"
     if limit:
@@ -156,6 +192,7 @@ def psycopg_fetch(dsn: str | None) -> Fetch:
         table: str, columns: list[str], where: str | None, limit: int | None
     ) -> list[dict[str, Any]]:
         with psycopg.connect(dsn, row_factory=dict_row) as conn:
+            conn.read_only = True  # the import only reads; the session refuses any write
             with conn.cursor() as cur:
                 cur.execute(build_query(table, columns, where, limit))  # type: ignore[arg-type]
                 return [dict(row) for row in cur.fetchall()]

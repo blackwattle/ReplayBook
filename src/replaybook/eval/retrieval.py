@@ -15,7 +15,15 @@ scores a search on its own, before any agent is involved, against the team's own
 
 Sources are `builtin` (Replaybook's own keyword search over the dataset, the baseline) and
 any loaded knowledge pack by name. Several sources in one run are scored on the same cases
-side by side. Links are never complete, so the absolute numbers are lower bounds; the
+side by side.
+
+An **agent** can be a source too (`--agent skill|external|<launcher> --type <research
+type>`): it works each ticket in the mock environment with every search tool it is given,
+all behind the guard, following the research skill of that request type, and ends with a
+`ticket_comment` naming the earlier tickets it relied on. Those ids, in the order it cites
+them, are scored like a search's results. Two things only an agent can do are counted
+besides: how many tool calls it made, and how many ids it cited that no tool ever returned
+to it (made-up citations). Links are never complete, so the absolute numbers are lower bounds; the
 comparison between sources, or between two settings of one source, is what to read. So
 every hit rate carries a 95% Wilson interval, and every source after the first is compared
 with the first ticket by ticket: on how many tickets it ranked the first related ticket
@@ -148,7 +156,18 @@ def score_ranking(ranked: list[str], relevant: dict[str, int], k_max: int) -> di
 
 # --- sources -----------------------------------------------------------------------------
 
-Search = Callable[[Ticket, str, int], tuple[list[str], GuardStats | None]]
+
+@dataclass
+class Found:
+    """What one source returned for one ticket: ids best first, what the guard removed (for a
+    knowledge pack) and anything else worth counting (for an agent)."""
+
+    ids: list[str]
+    guard: GuardStats | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+Search = Callable[[Ticket, str, int], Found]
 
 
 def builtin_search(corpus: Any) -> Search:
@@ -157,11 +176,11 @@ def builtin_search(corpus: Any) -> Search:
     from replaybook.mock_env.recorder import CallRecorder
     from replaybook.mock_env.world import TicketContext, WorldState
 
-    def search(ticket: Ticket, query: str, k: int) -> tuple[list[str], GuardStats | None]:
+    def search(ticket: Ticket, query: str, k: int) -> Found:
         world = WorldState(ticket=TicketContext.from_ticket(ticket))
         server = knowledge.build(world, CallRecorder(), corpus)
         found = server.tools[knowledge.SEARCH_TOOL](query=query, limit=k)
-        return [str(r["id"]) for r in found.get("results", [])], None
+        return Found([str(r["id"]) for r in found.get("results", [])])
 
     return search
 
@@ -176,9 +195,61 @@ def pack_search(pack: Any) -> Search:
         raise ValueError(f"knowledge pack '{pack.name}' names no search tool (knowledge.search)")
     id_field = spec.tools[spec.search].id
 
-    def search(ticket: Ticket, query: str, k: int) -> tuple[list[str], GuardStats | None]:
+    def search(ticket: Ticket, query: str, k: int) -> Found:
         items, stats = source.search(query, k, ticket.created, ticket.id)
-        return [str(item.get(id_field)) for item in items], stats
+        return Found([str(item.get(id_field)) for item in items], stats)
+
+    return search
+
+
+def citations(text: str, known: dict[str, str], exclude: str) -> list[str]:
+    """Ticket ids of the dataset named in `text`, in order of first mention."""
+    cited: list[str] = []
+    for token in TOKEN.findall(text):
+        ticket_id = known.get(token.casefold())
+        if ticket_id is not None and ticket_id != exclude and ticket_id not in cited:
+            cited.append(ticket_id)
+    return cited
+
+
+def agent_search(agent: Any, corpus: Any, platform: dict[str, Any] | None = None) -> Search:
+    """An agent under test works each ticket and cites the earlier tickets it relied on.
+
+    It gets the mock environment of a replay (the ticket tools, Replaybook's own knowledge
+    tools and every loaded pack, knowledge packs behind the guard). What it cites is read
+    from its ticket_comment writes, then its final message."""
+    from replaybook.mock_env.registry import COMMENT_TOOL, MockEnvironment
+    from replaybook.mock_env.world import WorldState
+
+    known = {t.id.casefold(): t.id for t in corpus.tickets}
+
+    def search(ticket: Ticket, query: str, k: int) -> Found:
+        env = MockEnvironment(WorldState.from_ticket(ticket, platform or {}), knowledge=corpus)
+        outcome = agent.run(env)
+        if outcome.stopped_reason in ("error", "offline") and outcome.error:
+            raise RuntimeError(f"the agent stopped: {outcome.error}")
+        written = " ".join(
+            " ".join(str(v) for v in call.args.values())
+            for call in env.recorder.writes
+            if call.tool == COMMENT_TOOL
+        )
+        cited = citations(f"{written} {outcome.final_message or ''}", known, ticket.id)
+        returned = {
+            token.casefold()
+            for call in env.recorder.reads
+            for token in TOKEN.findall(json.dumps(call.result, default=str))
+        }
+        usage = outcome.usage or {}
+        return Found(
+            cited,
+            extra={
+                "tool_calls": len(env.recorder.calls),
+                "unseen_citations": sum(1 for c in cited if c.casefold() not in returned),
+                "model_calls": int(usage.get("calls", 0)),
+                "cost_usd": float(usage.get("cost_usd") or 0.0),
+                "unknown_cost_calls": int(usage.get("unknown_cost_calls", 0)),
+            },
+        )
 
     return search
 
@@ -191,6 +262,7 @@ class CaseScore:
     returned: list[str]
     scores: dict[str, float] = field(default_factory=dict)
     guard: dict[str, int] | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
     seconds: float = 0.0
     error: str | None = None
 
@@ -203,9 +275,15 @@ class CaseScore:
             "found": [r for r in self.returned if r.casefold() in _folded(self.relevant)],
             "scores": self.scores,
             "guard": self.guard,
+            "extra": self.extra,
             "seconds": self.seconds,
             "error": self.error,
         }
+
+
+def _tail(text: str, limit: int = 600) -> str:
+    """The end of an error: for an agent's traceback the cause is at the bottom."""
+    return text if len(text) <= limit else "..." + text[-(limit - 3) :]
 
 
 def _folded(relevant: dict[str, int]) -> set[str]:
@@ -224,24 +302,25 @@ def run_source(
         relevant = truth[ticket.id]
         started = time.perf_counter()
         try:
-            returned, stats = search(ticket, query_text(ticket, query_chars), k)
+            found = search(ticket, query_text(ticket, query_chars), k)
         except Exception as exc:  # the source is someone else's; score it as an error
             return CaseScore(
                 ticket.id,
                 ticket.created.isoformat(),
                 relevant,
                 [],
-                error=f"{type(exc).__name__}: {exc}"[:500],
+                error=_tail(f"{type(exc).__name__}: {exc}"),
                 seconds=round(time.perf_counter() - started, 4),
             )
-        returned = [r for r in _dedupe(returned) if not same_id(r, ticket.id)][:k]
+        returned = [r for r in _dedupe(found.ids) if not same_id(r, ticket.id)][:k]
         return CaseScore(
             ticket.id,
             ticket.created.isoformat(),
             relevant,
             returned,
             scores=score_ranking(returned, relevant, k),
-            guard=stats.as_dict() if stats is not None else None,
+            guard=found.guard.as_dict() if found.guard is not None else None,
+            extra=found.extra,
             seconds=round(time.perf_counter() - started, 4),
         )
 
@@ -266,6 +345,20 @@ def summarise(scores: list[CaseScore], k: int) -> dict[str, Any]:
         stats = GuardStats(**{k_: v for k_, v in (s.guard or {}).items() if k_ != "leaks"})
         guard.add(stats)
     seconds = sorted(s.seconds for s in scored)
+    agent: dict[str, Any] | None = None
+    if any(s.extra for s in scored):
+        agent = {
+            "tool_calls_mean": round(
+                sum(s.extra.get("tool_calls", 0) for s in scored) / len(scored), 2
+            ),
+            "unseen_citations": sum(s.extra.get("unseen_citations", 0) for s in scored),
+            "cases_with_unseen_citations": sum(
+                1 for s in scored if s.extra.get("unseen_citations")
+            ),
+            "model_calls": sum(s.extra.get("model_calls", 0) for s in scored),
+            "cost_usd": round(sum(s.extra.get("cost_usd", 0.0) for s in scored), 4),
+            "unknown_cost_calls": sum(s.extra.get("unknown_cost_calls", 0) for s in scored),
+        }
     return {
         "cases": len(scores),
         "errors": len(scores) - len(scored),
@@ -275,6 +368,7 @@ def summarise(scores: list[CaseScore], k: int) -> dict[str, Any]:
         "duplicate_cases": sum(1 for s in scored if f"duplicate_found@{k}" in s.scores),
         "guard": guard.as_dict() if guarded else None,
         "cases_with_leaks": sum(1 for s in guarded if (s.guard or {}).get("leaks")),
+        "agent": agent,
         "seconds_mean": round(sum(seconds) / len(seconds), 4) if seconds else 0.0,
         "seconds_p95": seconds[min(len(seconds) - 1, int(0.95 * len(seconds)))] if seconds else 0.0,
         "first_errors": [s.error for s in scores if s.error][:3],
@@ -328,6 +422,27 @@ def _with_ci(summary: dict[str, Any], name: str) -> str:
     return f"{value:.0%} ({low:.0%}-{high:.0%})"
 
 
+def _agent_note(result: dict[str, Any]) -> str:
+    agent = result.get("agent")
+    if not agent:
+        return ""
+    names = [n for n, s in result["sources"].items() if s.get("agent")]
+    lines = []
+    for name in names:
+        usage = result["sources"][name]["agent"]
+        cost = f"${usage['cost_usd']:.2f}" if usage["model_calls"] else "no model calls"
+        if usage["unknown_cost_calls"]:
+            cost += f" (plus {usage['unknown_cost_calls']} calls that could not be priced)"
+        lines.append(
+            f"- **{name}** ({agent.get('agent')}"
+            + (f", request type {agent['request_type']}" if agent.get("request_type") else "")
+            + f"): searched behind the guard on every call; {usage['model_calls']} model calls, "
+            f"{cost}. Its leaks are not counted here: the guard removed them before it saw "
+            "anything."
+        )
+    return "\n".join(lines) + "\n\n"
+
+
 def _comparison(result: dict[str, Any]) -> str:
     comparisons = result.get("comparison") or {}
     if not comparisons:
@@ -372,6 +487,19 @@ def render(result: dict[str, Any]) -> str:
             ),
         ),
         ("No results", lambda s: str(s["empty"])),
+        (
+            "Tool calls per ticket (agent)",
+            lambda s: str(s["agent"]["tool_calls_mean"]) if s.get("agent") else "-",
+        ),
+        (
+            "Cited ids no tool returned (agent)",
+            lambda s: (
+                f"{s['agent']['unseen_citations']} in {s['agent']['cases_with_unseen_citations']}"
+                " tickets"
+                if s.get("agent")
+                else "-"
+            ),
+        ),
         ("Seconds per search (mean / p95)", lambda s: f"{s['seconds_mean']} / {s['seconds_p95']}"),
     ]
     table = ["| | " + " | ".join(names) + " |", "|---|" + "---|" * len(names)]
@@ -418,7 +546,9 @@ Wilson interval. **Recall@k**: share of the related tickets found in the top k. 
 
 {chr(10).join(leak_lines)}
 
-A leak here never reaches an agent during replay; it says how far the source itself can be
+{
+        _agent_note(result)
+    }A leak here never reaches an agent during replay; it says how far the source itself can be
 trusted without the guard. A source with an "as of" filter should show none after the
 horizon, but the ticket itself and the same-day results still come back if it filters by date.
 {chr(10) + "## Errors" + chr(10) + chr(10) + chr(10).join(errors) + chr(10) if errors else ""}
@@ -445,8 +575,12 @@ def evaluate(
     until: datetime | None = None,
     query_chars: int = 1000,
     workers: int = 4,
+    agent: Any = None,
+    agent_name: str = "",
 ) -> dict[str, Any]:
-    from replaybook.adapters.synthetic import load_tickets
+    """Score every source on the same cases. `agent` (with `agent_name`) adds an agent under
+    test as one more source, after the searches."""
+    from replaybook.adapters.synthetic import load_platform, load_tickets
     from replaybook.mock_env.knowledge import Corpus
     from replaybook.packs import registry
 
@@ -461,7 +595,7 @@ def evaluate(
             "dataset; import links (docs/ticket-sources.md) to give the search a ground truth"
         )
     searches: dict[str, Search] = {}
-    for name in sources or [BUILTIN]:
+    for name in sources or ([] if agent is not None else [BUILTIN]):
         if name == BUILTIN:
             searches[name] = builtin_search(Corpus.load(Path(data_dir)))
             continue
@@ -473,6 +607,10 @@ def evaluate(
                 f"{', '.join(known) or 'none loaded'}"
             )
         searches[name] = pack_search(pack)
+    if agent is not None:
+        searches[f"agent-{agent_name or 'agent'}"] = agent_search(
+            agent, Corpus.load(Path(data_dir)), load_platform(Path(data_dir))
+        )
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     result: dict[str, Any] = {
@@ -484,6 +622,7 @@ def evaluate(
         "query_chars": query_chars,
         "since": since.date().isoformat() if since else None,
         "until": until.date().isoformat() if until else None,
+        "agent": dict(agent.config) if agent is not None else None,
         "sources": {},
     }
     scored: dict[str, list[CaseScore]] = {}

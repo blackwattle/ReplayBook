@@ -326,7 +326,9 @@ fixtures built from the documented response shapes; a live run needs a developer
 
 Tickets already in a Postgres table (a RAG store or a warehouse) come in the same way with
 `replaybook postgres import --mapping warehouse.yaml --out data/warehouse` and
-`uv sync --extra postgres`. That adapter requires a status-history table and refuses
+`uv sync --extra postgres`. A section can name a read-only `query` instead of a table, for
+stores whose columns need shaping when you cannot create a view; the connection is
+read-only either way. That adapter requires a status-history table and refuses
 without one unless you pass `--allow-missing-history`, because without transitions there
 are no ask cases and an agent that never asks would look fine.
 
@@ -398,7 +400,9 @@ before any agent is involved: for the newest tickets that engineers linked to ea
 (or mentioned them in a comment), does a search with the ticket as filed, at its creation
 time, find them? Hit rate, recall, MRR and nDCG at k, side by side with Replaybook's own
 keyword search, each hit rate with a 95% interval and every source compared with the first
-ticket by ticket, plus the leaks the guard had to remove. Then put the pack on
+ticket by ticket, plus the leaks the guard had to remove. `--agent` scores an agent that searches too: it researches each ticket with
+every search tool it is given, behind the guard, and is scored on the earlier tickets it
+cites, with its tool calls and made-up citations counted. Then put the pack on
 `REPLAYBOOK_PACKS` and replay as usual: external agents, launchers and the skill agent all
 get its tools. A live index changes, so `cache: record` keeps the server's answers and
 `cache: replay` pins them for baselines and CI (the default, `off`, writes nothing); every run

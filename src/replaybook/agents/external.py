@@ -17,6 +17,13 @@ the time-travel guard are the same, so scores are comparable.
 When the agent exits, the recorded calls from every server are merged by time and handed
 to the environment's recorder so scoring works the same as for in-process agents.
 
+Agents and harnesses start the mock servers with an environment of their own choosing
+(the MCP SDK passes only PATH, HOME and a few more), so the settings a mock server needs
+travel in a file instead: the packs on REPLAYBOOK_PACKS (made absolute), the knowledge cache
+and air-gap settings, and the variables a knowledge pack's pack.yaml refers to as
+${NAME}. The file is written for the case, readable by its owner only, inside the case's
+temporary directory, and its path, never its values, is in each server's arguments.
+
 Launchers (`replaybook.agents.launchers`) use the same plumbing to run an off-the-shelf
 agent harness: `case_files` writes the per-case files, `run_command` runs the process and
 `collect_calls` hands the recorded calls back.
@@ -27,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -44,10 +52,53 @@ from replaybook.mock_env.serve import READY_PREFIX
 
 TRANSPORTS = ("stdio", "http", "tools")
 STARTUP_TIMEOUT_S = 60.0
+# Settings a mock server reads from the environment.
+SERVER_SETTINGS = (
+    "REPLAYBOOK_PACKS",
+    "REPLAYBOOK_KNOWLEDGE_CACHE",
+    "REPLAYBOOK_KNOWLEDGE_CACHE_DIR",
+    "REPLAYBOOK_AIRGAPPED",
+    "REPLAYBOOK_ALLOWED_HOSTS",
+)
+ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def server_environment() -> dict[str, str]:
+    """What a mock server started by someone else's process needs from this one's
+    environment: the server settings (paths made absolute, since that process runs
+    elsewhere) and every variable a loaded knowledge pack refers to."""
+    from replaybook.packs import registry
+
+    wanted = set(SERVER_SETTINGS)
+    for pack in registry().packs:
+        if pack.knowledge is not None:
+            wanted |= set(ENV_REF.findall(json.dumps(pack.manifest.get("knowledge"))))
+    env = {name: os.environ[name] for name in sorted(wanted) if name in os.environ}
+    if env.get("REPLAYBOOK_PACKS"):
+        parts = [p for p in env["REPLAYBOOK_PACKS"].split(os.pathsep) if p.strip()]
+        env["REPLAYBOOK_PACKS"] = os.pathsep.join(
+            str(Path(p).expanduser().resolve()) for p in parts
+        )
+    if env.get("REPLAYBOOK_KNOWLEDGE_CACHE_DIR"):
+        cache_dir = Path(env["REPLAYBOOK_KNOWLEDGE_CACHE_DIR"]).expanduser().resolve()
+        env["REPLAYBOOK_KNOWLEDGE_CACHE_DIR"] = str(cache_dir)
+    return env
+
+
+def write_env_file(path: Path, env: dict[str, str]) -> None:
+    """Write the server settings readable by the owner only (it may hold a token)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(env, handle)
 
 
 def server_command(
-    name: str, world_path: Path, record_path: Path, knowledge_dir: Path | None = None
+    name: str,
+    world_path: Path,
+    record_path: Path,
+    knowledge_dir: Path | None = None,
+    env_file: Path | None = None,
 ) -> dict[str, Any]:
     """How to start one mock server over stdio: `{"command": ..., "args": [...]}`."""
     args = [
@@ -63,15 +114,23 @@ def server_command(
     ]
     if knowledge_dir is not None:
         args += ["--knowledge", str(knowledge_dir)]
+    if env_file is not None:
+        args += ["--env-file", str(env_file)]
     return {"command": sys.executable, "args": args}
 
 
 def mcp_config(
-    world_path: Path, record_dir: Path, servers: list[str], knowledge_dir: Path | None = None
+    world_path: Path,
+    record_dir: Path,
+    servers: list[str],
+    knowledge_dir: Path | None = None,
+    env_file: Path | None = None,
 ) -> dict[str, Any]:
     return {
         "mcpServers": {
-            name: server_command(name, world_path, record_dir / f"{name}.jsonl", knowledge_dir)
+            name: server_command(
+                name, world_path, record_dir / f"{name}.jsonl", knowledge_dir, env_file
+            )
             for name in servers
         }
     }
@@ -102,14 +161,20 @@ class CaseFiles:
         return self.root / "replaybook" / "mcp.json"
 
     @property
+    def env_path(self) -> Path:
+        """The mock servers' settings (see the module docstring); absent when there are none."""
+        return self.root / "replaybook" / "server-env.json"
+
+    @property
     def workdir(self) -> Path:
         """An empty directory the agent process runs in."""
         return self.root / "work"
 
     def mcp_servers(self) -> dict[str, dict[str, Any]]:
-        return mcp_config(self.world_path, self.record_dir, self.servers, self.knowledge_dir)[
-            "mcpServers"
-        ]
+        env_file = self.env_path if self.env_path.is_file() else None
+        return mcp_config(
+            self.world_path, self.record_dir, self.servers, self.knowledge_dir, env_file
+        )["mcpServers"]
 
     def environment(self) -> dict[str, str]:
         """The two variables of the plain external-agent contract, on top of the parent's."""
@@ -130,6 +195,9 @@ def case_files(env: MockEnvironment) -> Iterator[CaseFiles]:
         files.record_dir.mkdir(parents=True)
         files.workdir.mkdir()
         files.world_path.write_text(env.world.model_dump_json(), encoding="utf-8")
+        settings = server_environment()
+        if settings:
+            write_env_file(files.env_path, settings)
         ticket = env.world.ticket.model_dump() if env.world.ticket else {}
         files.ticket_path.write_text(json.dumps(ticket, indent=2), encoding="utf-8")
         files.config_path.write_text(
@@ -168,6 +236,8 @@ def open_door(
     args += ["--world", str(files.world_path), "--record", str(files.record_dir / "all.jsonl")]
     if files.knowledge_dir is not None:
         args += ["--knowledge", str(files.knowledge_dir)]
+    if files.env_path.is_file():
+        args += ["--env-file", str(files.env_path)]
     process = subprocess.Popen(
         [sys.executable, "-m", "replaybook.cli", *args],
         stdout=subprocess.PIPE,

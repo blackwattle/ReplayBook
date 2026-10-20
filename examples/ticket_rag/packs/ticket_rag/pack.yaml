@@ -6,8 +6,15 @@
 #   export REPLAYBOOK_PACKS=packs:examples/ticket_rag/packs
 #   uv run replaybook knowledge check ticket_rag --query "kafka topic"
 #   uv run replaybook knowledge eval --data data/generated --source builtin --source ticket_rag
+#   uv run replaybook knowledge eval --data data/generated --source ticket_rag --agent external \
+#       --type ticket_research --command "python examples/ticket_rag/research_agent.py"
 name: ticket_rag
 description: Past tickets from the team's own search server
+# The research task `knowledge eval --agent` gives an agent: find and cite earlier tickets.
+request_types:
+  ticket_research:
+    label: Past-ticket research
+    skill: skills/research/SKILL.md
 knowledge:
   server:
     # Started over stdio in this directory. A server that is already running is reached

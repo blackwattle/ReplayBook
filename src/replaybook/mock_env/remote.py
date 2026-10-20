@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import ssl
 import threading
 from contextlib import AsyncExitStack
 from typing import Any
@@ -74,12 +75,10 @@ class RemoteServer:
         if self.target is not None:
             return self.target
         if self.spec.url:
-            from mcp.client.streamable_http import streamable_http_client
-            from mcp.shared._httpx_utils import create_mcp_http_client
-
-            headers = {k: expand_env(v) for k, v in self.spec.headers.items()}
-            http = create_mcp_http_client(headers=headers)
+            http = self._http_client()
             stack.push_async_callback(http.aclose)
+            from mcp.client.streamable_http import streamable_http_client
+
             return streamable_http_client(expand_env(self.spec.url), http_client=http)
         from mcp.client.stdio import StdioServerParameters
 
@@ -91,6 +90,22 @@ class RemoteServer:
             env=env,
             cwd=str(self.spec.cwd) if self.spec.cwd else None,
         )
+
+    def _http_client(self) -> Any:
+        """The SDK's own client settings, plus the pack's headers and, for a server behind a
+        private certificate authority, its CA bundle. Proxy and certificate environment
+        variables (HTTPS_PROXY, SSL_CERT_FILE) are honoured as usual."""
+        import httpx2
+        from mcp.shared._httpx_utils import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
+
+        kwargs: dict[str, Any] = {
+            "timeout": httpx2.Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+            "headers": {k: expand_env(v) for k, v in self.spec.headers.items()},
+        }
+        ca_path = self.spec.ca_path()
+        if ca_path is not None:
+            kwargs["verify"] = ssl.create_default_context(cafile=str(ca_path))
+        return httpx2.AsyncClient(**kwargs)
 
     async def _own(self, ready: asyncio.Future[None]) -> None:
         """The task that holds the connection: open it, report ready, wait for stop."""

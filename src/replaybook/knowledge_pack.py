@@ -5,7 +5,8 @@ a team's own past-ticket search server, and prove it fits before anyone replays 
 with the read-only tools and a pack.yaml whose `knowledge:` section is guessed from the
 argument names and marked CHANGE_ME where only a person can tell (which field holds the
 ticket id, the creation time, the resolution). Write tools are left out: a knowledge pack
-never writes.
+never writes. It also writes a research request type (`<name>_research`) and its skill,
+the task `knowledge eval --agent` gives an agent: find and cite the earlier tickets.
 
 `check` validates the section against tools.json (every named argument exists, every tool is
 read-only), optionally refreshes tools.json from the server, and runs one search through
@@ -90,8 +91,68 @@ def manifest(
     return {
         "name": name,
         "description": description or f"Past tickets from the {name} search server",
+        "request_types": {
+            f"{name}_research": {
+                "label": "Past-ticket research",
+                "skill": "skills/research/SKILL.md",
+            }
+        },
         "knowledge": knowledge,
     }
+
+
+DESCRIPTION = (
+    "Find the earlier tickets that show how a problem like this one was handled, and cite them."
+)
+
+
+def research_skill(
+    name: str, tools: list[dict[str, Any]], search: str | None, lookup: str | None
+) -> str:
+    """The research skill for a knowledge pack: its own tools, Replaybook's knowledge tools
+    and one ticket_comment that cites what helped."""
+    names = [str(t["name"]) for t in tools]
+    listed = ", ".join(
+        ["ticket_get", *names, "knowledge_search_tickets", "knowledge_get_ticket", "ticket_comment"]
+    )
+    search_step = (
+        f"Search with `{search}`, describing the problem in your own words"
+        if search
+        else "Search with this pack's search tools, describing the problem in your own words"
+    )
+    open_step = (
+        f"Open the most promising results with `{lookup}` to see how they ended."
+        if lookup
+        else "Open the most promising results to see how they ended."
+    )
+    return f"""---
+name: {name.replace("_", "-")}-research
+description: {DESCRIPTION}
+request_type: {name}_research
+tools: {listed}
+---
+
+# Past-ticket research
+
+## When this applies
+Any ticket, before anyone works it: has this happened before, and how was it solved?
+`replaybook knowledge eval --agent ... --type {name}_research` scores what you cite against
+the earlier tickets engineers linked to this one.
+
+## Steps
+1. Read the ticket with `ticket_get`.
+2. {search_step}: the system, the error message, the change asked for. If the first search
+   finds nothing close, try two or three different ones.
+3. {open_step}
+4. Finish with exactly one `ticket_comment`. Its body starts with `Related:` and the ids of
+   the earlier tickets that help, most relevant first, at most 10, then one line per ticket
+   on how it was handled.
+
+## Rules
+- Cite only ids a tool returned to you. Never write an id you have not seen.
+- If nothing relevant turns up, comment `Related: none` and say what you searched for.
+- Change nothing: this is research. Do not ask the requester or hand the ticket back.
+"""
 
 
 HEADER = """# Knowledge pack: {name}. Its tools come from your own past-ticket search server, behind
@@ -164,6 +225,13 @@ def import_knowledge(
         manifest(name, description, server, reads), sort_keys=False, allow_unicode=True
     )
     (pack_dir / "pack.yaml").write_text(text, encoding="utf-8")
+    knowledge = yaml.safe_load(text)["knowledge"]
+    skill_dir = pack_dir / "skills" / "research"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        research_skill(name, reads, knowledge.get("search"), knowledge.get("lookup")),
+        encoding="utf-8",
+    )
     return {"pack": pack_dir, "tools": len(reads), "skipped": skipped, "listed": len(listed)}
 
 
