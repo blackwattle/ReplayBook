@@ -91,8 +91,12 @@ class SkillAgent:
         # Every pack's tools at once (53 with the example packs, some 21,000 characters of
         # schema on every call) push the skill out of a small model's context and cost more
         # per step than one pack plus the core tools (13 to 18 with the example skills).
-        pack = registry().request_types[request_type].pack
-        self.servers = [ticket.SERVER_NAME, knowledge.SERVER_NAME, pack]
+        reg = registry()
+        pack = reg.request_types[request_type].pack
+        # Knowledge packs (a team's own past-ticket search, behind the time-travel guard)
+        # are offered beside the built-in knowledge tools.
+        searches = [p.name for p in reg.packs if p.knowledge is not None and p.name != pack]
+        self.servers = [ticket.SERVER_NAME, knowledge.SERVER_NAME, pack, *searches]
         self.llm = llm
         self.tier = tier
         self.max_steps = max_steps

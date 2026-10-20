@@ -11,7 +11,9 @@ work but must prove it is safe first. Everything runs on your own machines and n
 leaves your network.
 
 **Every tool pack in this repo is a local mock and nothing touches real infrastructure.**
-Reads answer from a small per-case world state; writes are recorded, never executed.
+Reads answer from a small per-case world state; writes are recorded, never executed. The
+one thing that may be live is a knowledge pack you add: read-only past-ticket search on
+your own server, behind the time-travel guard.
 
 ## Bring your own tools and ticket system
 
@@ -30,6 +32,9 @@ Replaybook does not care which tools your agent uses or where your tickets live.
   or ServiceNow. Each adapter says where effort comes from (logged time, time in working
   statuses, or created-to-resolved), so discovery can rank request types by the hours they
   really cost you.
+- **Past-ticket search.** If you already run a RAG server over your tickets, a *knowledge
+  pack* lets the agent under test use it during replay, behind the time-travel guard, and
+  `replaybook knowledge eval` scores how well it finds the tickets engineers linked.
 
 ## Shadow mode
 
@@ -367,6 +372,35 @@ cut at that instant, the status as it was then, and never the ticket under test.
 seeds a leak (a later ticket quoting the answer, the test ticket's own resolution, a
 long-running ticket whose answer arrived later) and proves none of it comes back. Point
 your own RAG at the same rule: filter on creation time, strictly before the ticket's.
+
+## Your own past-ticket search: knowledge packs
+
+If your team already runs a retrieval server over its ticket history (a RAG index behind an
+MCP server), the agent under test should use that, with its real tools and ranking. A
+**knowledge pack** serves the server's read-only tools behind the same guard: Replaybook
+forwards each call and, before the agent sees anything, drops the ticket under test, every
+ticket created after it and anything it cannot date; removes resolutions that arrived after
+the horizon, comments written after it and fields that reveal the present (age, scores);
+answers "similar to" and "get" tools only for visible tickets; over-fetches so filtering does
+not leave the agent short; and, when the server has an "as of" argument, sets it to the
+horizon and hides it from the agent.
+
+```bash
+uv run replaybook knowledge import --name ticket_rag --url '${TICKET_RAG_URL}' --header 'Authorization=Bearer ${TICKET_RAG_TOKEN}' --out packs
+uv run replaybook knowledge check ticket_rag --query "certificate expired on the load balancer"
+uv run replaybook knowledge eval --data data/warehouse --source builtin --source ticket_rag --out retrieval
+```
+
+`import` lists the tools and writes the pack with a guard section to fill in (where the
+server keeps each ticket's id, creation and resolution time); `check` validates it and runs
+one search through the guard, showing what was removed and why; `eval` scores the search
+before any agent is involved: for the newest tickets that engineers linked to earlier ones
+(or mentioned them in a comment), does a search with the ticket as filed, at its creation
+time, find them? Hit rate, recall, MRR and nDCG at k, side by side with Replaybook's own
+keyword search, plus the leaks the guard had to remove. Then put the pack on
+`REPLAYBOOK_PACKS` and replay as usual: external agents, launchers and the skill agent all
+get its tools. `docs/knowledge-sources.md` has the details and a worked example with a fake
+server in `examples/ticket_rag/`.
 
 ## How scoring works
 

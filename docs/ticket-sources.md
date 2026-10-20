@@ -58,6 +58,7 @@ tickets:
     comments: Comments         # a JSON list in the cell, instead of a companion table
     status_changes: History    # same
     actions: Actions           # same
+    links: Links               # same: a JSON list of {type, target}
   list_separator: ";"
   datetime_format: null        # ISO 8601 when null; otherwise a strptime format such as "%d/%m/%Y %H:%M"
 
@@ -86,6 +87,15 @@ actions:                       # optional: an audit log of tool calls (JSONL is 
     args: args                 # a JSON object (or a JSON string in a CSV cell)
     at: at
 
+links:                         # optional companion table, one row per link between tickets
+  file: links.csv
+  columns:
+    ticket_id: Issue key
+    target: Linked issue
+    type: Link type
+link_types:                    # optional: your link names -> duplicates, relates or fixes
+  "Problem/Incident": fixes
+
 status_map:                    # your status names -> the canonical ones
   "Pending customer": "Waiting on Requester"
   "Done": "Resolved"
@@ -112,6 +122,11 @@ What the fields mean:
 - **Actions** are the audit log of what engineers did, as tool calls, when a system has
   one. Tool names must match the pack's mock tools. Tickets without actions get their
   expectations from the text (`build-testset --extract rules|model`), labelled unverified.
+- **Links** tie a ticket to others (duplicates, relates, fixes). They are the ground truth
+  `replaybook knowledge eval` scores past-ticket search against (docs/knowledge-sources.md).
+  Link names are mapped through `link_types`; otherwise a name containing "dup" means
+  duplicates, "fix" means fixes and anything else relates. A link may point at a ticket
+  outside the export; a link to the ticket itself is dropped.
 - **Datetimes** are ISO 8601 unless `datetime_format` says otherwise; naive values are
   taken as UTC; numbers are Unix timestamps.
 
@@ -191,6 +206,10 @@ actions:                         # optional audit log of tool calls (args as JSO
   table: analytics.ticket_actions
   columns: {ticket_id: ticket_key, tool: tool, args: args, at: at}
 
+links:                           # optional links between tickets
+  table: analytics.ticket_links
+  columns: {ticket_id: ticket_key, target: linked_key, type: link_type}
+
 status_map: {"Pending customer": "Waiting on Requester", "Done": "Resolved"}
 engineers: [alice]
 effort: {source: status_time, working_statuses: [In Progress, Reopened]}
@@ -221,9 +240,11 @@ Two more things to know:
 own retrieval tool, nothing stops it reading the ticket it is being tested on, or later
 ones. Either route the agent through Replaybook's `knowledge_search_tickets` (served from
 the imported dataset with the time-travel guard: only items created strictly before the
-ticket under test, cut at that instant, never the ticket itself) or give the agent's
-retrieval the same as-of filter on the creation column. Embeddings computed over a whole
-table leak too, because the vector of a later ticket is still a neighbour.
+ticket under test, cut at that instant, never the ticket itself), or serve the agent's own
+retrieval server as a knowledge pack, which puts the same guard around its tools
+(docs/knowledge-sources.md). Embeddings computed over a whole table leak too, because the
+vector of a later ticket is still a neighbour; give your server an as-of filter on the
+creation column so it ranks only what existed then.
 
 Develop and test against a throwaway Postgres (for example `docker run --rm -e
 POSTGRES_PASSWORD=x -p 5432:5432 postgres:16` with a few rows), never against real company

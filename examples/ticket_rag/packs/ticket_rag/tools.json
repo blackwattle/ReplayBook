@@ -1,0 +1,92 @@
+{
+  "tools": [
+    {
+      "name": "search_tickets",
+      "description": "Find past tickets similar to a problem description, best match first.\n\n        query           the problem, an error message or keywords\n        top_k           how many tickets to return, 1-20 (default 5)\n        created_before  optional ISO 8601 time: only tickets created before it\n        ",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "created_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created Before"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "search_ticketsArguments"
+      },
+      "annotations": {
+        "read_only_hint": true,
+        "destructive_hint": false,
+        "idempotent_hint": true
+      }
+    },
+    {
+      "name": "find_similar_tickets",
+      "description": "Tickets similar to an existing ticket (the ticket itself is left out).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_key": {
+            "title": "Ticket Key",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticket_key"
+        ],
+        "title": "find_similar_ticketsArguments"
+      },
+      "annotations": {
+        "read_only_hint": true,
+        "destructive_hint": false,
+        "idempotent_hint": true
+      }
+    },
+    {
+      "name": "get_ticket",
+      "description": "One past ticket in full: description, comments, resolution and links.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_key": {
+            "title": "Ticket Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket_key"
+        ],
+        "title": "get_ticketArguments"
+      },
+      "annotations": {
+        "read_only_hint": true,
+        "destructive_hint": false,
+        "idempotent_hint": true
+      }
+    }
+  ]
+}

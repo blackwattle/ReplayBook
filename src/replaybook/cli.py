@@ -151,6 +151,13 @@ def packs(
     for pack in reg.packs:
         kinds = ", ".join(f"{k} ({v.label})" for k, v in pack.request_types.items()) or "none"
         typer.echo(f"{pack.name}: {pack.path}")
+        if pack.knowledge is not None:
+            server = pack.knowledge.server
+            typer.echo(
+                f"  knowledge pack: {server.transport} {server.describe()}, "
+                f"{len(pack.knowledge.tools)} tools behind the time-travel guard"
+            )
+            continue
         typer.echo(f"  request types: {kinds}")
         typer.echo(
             f"  rules: {len(pack.rules)} tools, {len(pack.unsafe)} unsafe, "
@@ -520,6 +527,167 @@ def tools_schema(
         typer.echo(text, nl=False)
     else:
         typer.echo(f"Wrote {out}")
+
+
+knowledge_app = typer.Typer(
+    help="Your own past-ticket search (a RAG server) behind the time-travel guard: import it "
+    "as a knowledge pack, check it, and score how well it finds related tickets."
+)
+app.add_typer(knowledge_app, name="knowledge")
+
+
+def _headers(values: list[str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for value in values:
+        name, sep, text = value.partition("=")
+        if not sep or not name.strip():
+            raise typer.BadParameter(f"--header must look like Name=value, got {value!r}")
+        headers[name.strip()] = text
+    return headers
+
+
+@knowledge_app.command("import")
+def knowledge_import(
+    name: Annotated[
+        str, typer.Option(help="Pack name, e.g. ticket_rag (letters, digits, _ or -).")
+    ],
+    url: Annotated[
+        str, typer.Option(help="URL of the server over streamable HTTP; may use ${VARIABLES}.")
+    ] = "",
+    command: Annotated[
+        str, typer.Option(help="Command that starts the server over stdio (shell-split).")
+    ] = "",
+    json_file: Annotated[
+        Path | None, typer.Option("--json", help="A saved tools/list result instead.")
+    ] = None,
+    header: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="HTTP header as Name=value, repeatable. Write secrets as ${VARIABLE} (from "
+            ".env); the pack keeps the reference, never the value."
+        ),
+    ] = None,
+    out: Annotated[Path, typer.Option(help="Directory to create the pack in.")] = Path("packs"),
+    description: Annotated[str, typer.Option(help="One line for pack.yaml.")] = "",
+) -> None:
+    """List a past-ticket search server's tools (the only call made) and write a knowledge
+    pack: tools.json with its read-only tools and a pack.yaml whose guard section is guessed
+    from the argument names, with CHANGE_ME where a person has to look."""
+    from replaybook.knowledge_pack import import_knowledge
+    from replaybook.mock_env.guarded import KnowledgeSpecError
+    from replaybook.mock_env.remote import RemoteError
+
+    try:
+        result = import_knowledge(
+            name, out, url, command, json_file, _headers(header or []), description
+        )
+    except (ValueError, FileExistsError, OSError, KnowledgeSpecError, RemoteError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(
+        f"{name}: {result['tools']} read-only tools of {result['listed']} -> {result['pack']}"
+    )
+    if result["skipped"]:
+        typer.echo("left out (not annotated read-only): " + ", ".join(result["skipped"]))
+    typer.echo(
+        f"Next: fill in CHANGE_ME in {result['pack'] / 'pack.yaml'}, then run "
+        f'`replaybook knowledge check {name} --query "a typical problem"` with '
+        f"REPLAYBOOK_PACKS pointing at {out}."
+    )
+
+
+@knowledge_app.command("check")
+def knowledge_check(
+    pack: Annotated[str, typer.Argument(help="The knowledge pack to check.")],
+    refresh: Annotated[
+        bool, typer.Option(help="List the server's tools again and rewrite tools.json.")
+    ] = False,
+    query: Annotated[
+        str, typer.Option(help="Run one search through the guard with this text.")
+    ] = "",
+    at: Annotated[str, typer.Option(help="Horizon for the probe, ISO 8601 (default: now).")] = "",
+) -> None:
+    """Validate a knowledge pack against its tools and, with --query, run one guarded search:
+    what the server returned, what the guard removed and why. Exit 1 when there are
+    problems."""
+    import json
+    from datetime import UTC, datetime
+
+    from replaybook.knowledge_pack import check_pack
+    from replaybook.mock_env.remote import RemoteError
+    from replaybook.packs import PackError, registry
+
+    try:
+        found = registry().pack(pack)
+    except PackError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if found.knowledge is None:
+        raise typer.BadParameter(f"pack '{pack}' has no knowledge section")
+    horizon = None
+    if at:
+        try:
+            horizon = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise typer.BadParameter("--at must be ISO 8601, e.g. 2025-06-01T09:00:00Z") from exc
+        horizon = horizon if horizon.tzinfo else horizon.replace(tzinfo=UTC)
+    try:
+        report = check_pack(found, refresh, query, horizon)
+    except (RemoteError, OSError, ValueError) as exc:
+        typer.echo(f"error: could not reach the server: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"{report['pack']}: {report['transport']} {report['server']}")
+    if "refreshed_tools" in report:
+        typer.echo(f"  tools.json refreshed: {report['refreshed_tools']} read-only tools")
+    if "guard" in report:
+        guard = report["guard"]
+        typer.echo(
+            f"  probe at {report['horizon']}: the server returned {report['raw_results']}, "
+            f"the agent would see {report['guarded_results']}; removed {guard['the_ticket_itself']}"
+            f" itself, {guard['after_horizon']} later, {guard['undated']} undated, "
+            f"{guard['trimmed']} over the limit; {guard['fields_removed']} fields removed"
+        )
+    if report.get("raw_first_fields"):
+        typer.echo("  fields of the first raw result: " + ", ".join(report["raw_first_fields"]))
+    if report.get("first_guarded"):
+        typer.echo(
+            "  first result as the agent sees it: " + json.dumps(report["first_guarded"])[:400]
+        )
+    for problem in report["problems"]:
+        typer.echo(f"  problem: {problem}")
+    if report["problems"]:
+        raise typer.Exit(code=1)
+    typer.echo("  ok")
+
+
+@knowledge_app.command("eval")
+def knowledge_eval(
+    data: Annotated[
+        Path, typer.Option(help="Dataset directory with the tickets and their links.")
+    ] = DEFAULT_DATA_DIR,
+    source: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="builtin (Replaybook's keyword search) or a knowledge pack; repeat to compare."
+        ),
+    ] = None,
+    out: Annotated[Path, typer.Option(help="Directory for the report.")] = Path("retrieval"),
+    n: Annotated[int, typer.Option(help="Newest tickets with known related tickets.")] = 200,
+    k: Annotated[int, typer.Option(help="Results scored per search, 1 to 25.")] = 10,
+    since: Annotated[str, typer.Option(help="Only tickets created on or after (YYYY-MM-DD).")] = "",
+    until: Annotated[str, typer.Option(help="Only tickets created before (YYYY-MM-DD).")] = "",
+    query_chars: Annotated[
+        int, typer.Option(help="Characters of summary and description used as the query.")
+    ] = 1000,
+    workers: Annotated[int, typer.Option(help="Searches in parallel.")] = 4,
+) -> None:
+    """Score past-ticket search against history: for each ticket, does the search (run at the
+    ticket's creation time, behind the guard) find the earlier tickets engineers linked or
+    mentioned? Writes retrieval.md, retrieval.json and the per-ticket results."""
+    from replaybook import workflow
+
+    run_workflow(
+        workflow.knowledge_eval, data, source, out, n, k, since, until, query_chars, workers
+    )
 
 
 tickets_app = typer.Typer(help="Bring your own ticket system: import tickets from a table.")

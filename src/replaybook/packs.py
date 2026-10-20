@@ -22,6 +22,10 @@ directory with:
                  recording mock is built from
 - skills/        sample SKILL.md files
 
+A pack with a `knowledge:` section in pack.yaml is a knowledge pack: its tools come from
+the team's own read-only retrieval server, served behind the time-travel guard
+(mock_env.guarded), instead of from a mock.
+
 Packs are found through REPLAYBOOK_PACKS (directories separated by the OS path separator),
 otherwise `./packs` in the working directory, otherwise the `packs/` directory of this
 checkout. `registry()` caches the result; `reset()` forgets it.
@@ -116,12 +120,25 @@ class Pack:
         if not self.name.replace("_", "").replace("-", "").isalnum():
             raise PackError(f"pack name '{self.name}' must be letters, digits, _ or -")
         self.description = str(self.manifest.get("description") or "")
+        self.knowledge = self._knowledge()
         self.request_types = self._request_types()
         self.rules, self.unsafe, self.superseded = self._rules()
         self._modules: dict[str, ModuleType | None] = {}
         self._lock = threading.Lock()
 
     # --- manifest ----------------------------------------------------------------------
+
+    def _knowledge(self) -> Any:
+        """The knowledge section as a KnowledgeSpec, or None for an ordinary pack."""
+        section = self.manifest.get("knowledge")
+        if section is None:
+            return None
+        from replaybook.mock_env.guarded import KnowledgeSpec, KnowledgeSpecError
+
+        try:
+            return KnowledgeSpec.parse(section, self.path)
+        except KnowledgeSpecError as exc:
+            raise PackError(f"{self.path / 'pack.yaml'}: {exc}") from exc
 
     def _request_types(self) -> dict[str, RequestTypeInfo]:
         found: dict[str, RequestTypeInfo] = {}
@@ -215,6 +232,15 @@ class Pack:
         return path if path.is_file() else None
 
     def build_server(self, world: Any, recorder: Any) -> Any:
+        if self.knowledge is not None:
+            if self.tools_json is None:
+                raise PackError(
+                    f"knowledge pack '{self.name}' has no tools.json; run "
+                    "`replaybook knowledge import` or `replaybook knowledge check --refresh`"
+                )
+            from replaybook.mock_env.guarded import build_guarded_server
+
+            return build_guarded_server(self, world, recorder)
         server = self.module("server")
         if server is not None:
             return server.build(world, recorder)
@@ -425,6 +451,7 @@ class PackRegistry:
                     "path": str(p.path),
                     "request_types": sorted(p.request_types),
                     "tools_with_rules": len(p.rules),
+                    "knowledge": p.knowledge.server.describe() if p.knowledge else None,
                 }
                 for p in self.packs
             },
@@ -475,6 +502,9 @@ def reset() -> None:
         _registry = None
         for name in [m for m in sys.modules if m.startswith(MODULE_PREFIX)]:
             del sys.modules[name]
+    from replaybook.mock_env.guarded import forget
+
+    forget()
 
 
 def use(reg: PackRegistry) -> None:

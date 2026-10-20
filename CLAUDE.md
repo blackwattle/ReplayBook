@@ -39,6 +39,9 @@ evidence pack reports the shadow results in their own section.
 - Licence: Apache-2.0 (`LICENSE`, `NOTICE`; `TRADEMARK.md` for the name, `CONTRIBUTING.md`
   for the DCO). No GPL or AGPL dependency in the default install.
 - Anything that names an agent harness (launchers) lives outside `src/`, like packs.
+- A knowledge pack is the only live source: a team's own past-ticket search server, read-only
+  tools only, every result through the time-travel guard. The guard fails closed (no id or
+  no date, no result), and its tests use the fake server in `examples/ticket_rag/`.
 
 ## Layout
 - `packs/<name>/`            one pack per tool family: `pack.yaml` manifest (request types, keywords, identifying tools, skill), `rules.yaml` scoring rules, `server.py` mock tools, `world.py` world slice, `safety.py` argument-based unsafe checks, `synth.py` synthetic request types, `agent.py` scripted procedures and extraction rules, `skills/`
@@ -53,6 +56,9 @@ evidence pack reports the shadow results in their own section.
 - `src/replaybook/schema/`   canonical Ticket (with effort_source), TestCase and result models (pydantic v2)
 - `src/replaybook/synth/`    seeded synthetic ticket generator with hidden ground truth; request types come from the packs
 - `src/replaybook/adapters/` ticket sources: synthetic, tabular (csv/jsonl/json with a mapping), postgres, public_jira, jira_cloud, servicenow; `effort.py` applies the effort source; `jira_issue.py` is the shared Jira conversion
+- `src/replaybook/mock_env/guarded.py`, `remote.py` knowledge packs: a team's own read-only past-ticket search server (`knowledge:` in pack.yaml, tools.json) served behind the time-travel guard; `remote.py` is the one connection to it
+- `src/replaybook/knowledge_pack.py` `replaybook knowledge import` (a knowledge pack skeleton from a server's tool list) and `knowledge check` (validate, probe through the guard)
+- `src/replaybook/eval/retrieval.py` `replaybook knowledge eval`: scores past-ticket search (builtin or a knowledge pack) against the earlier tickets each ticket links to or mentions, at its creation time
 - `src/replaybook/mock_env/` ticket tools, knowledge tools behind the time-travel guard, pack server hosting, generic recording mock, world state, call recorder, tool fingerprints; `serve.py` serves the mocks over stdio or streamable HTTP (one combined server, `mock-server --http`), `http_tools.py` is the function-calling door (`tools schema`, `tool-endpoint`)
 - `src/replaybook/agents/`   agents under test: scripted (with flaws, procedures from packs), LiteLLM skill agent, external subprocess adapter (transports stdio, http, tools); `parse.py` generic text helpers
 - `src/replaybook/llm/`      LiteLLM wrapper with spend cap, disk cache and offline fallback
@@ -62,7 +68,9 @@ evidence pack reports the shadow results in their own section.
 - `src/replaybook/sbom.py`   CycloneDX SBOM from uv.lock (needs the `sbom` dependency group)
 - `examples/payroll/`        a fake payroll MCP server, the overlay a person adds after the import, canonical tickets and their CSV form: the conformance test for a pack the core has never seen
 - `examples/external_agent/` a tiny external agent run through the subprocess adapter
-- `docs/ticket-sources.md`   column mappings for the csv/jsonl and postgres adapters, ServiceNow notes, the as-of rule for RAG tables
+- `examples/ticket_rag/`     a fake past-ticket search server that leaks like a real one, and the knowledge pack that guards it
+- `docs/ticket-sources.md`   column mappings for the csv/jsonl and postgres adapters (including links), ServiceNow notes, the as-of rule for RAG tables
+- `docs/knowledge-sources.md` knowledge packs: the guard rules, the pack.yaml reference, import/check/eval, the worked example
 - `docs/public-jira-findings.md` what broke on real tickets (Apache INFRA) and what changed because of it
 - `docs/replay-outcomes.md`  the outcomes, the escalation labelling rule, the spot-check and the go-live gate
 - `docs/verified-writes.md`  declaring and validating checks, the live contract for a runtime
@@ -75,6 +83,7 @@ evidence pack reports the shadow results in their own section.
 - `uv run replaybook packs` lists the loaded packs; `--tools` lists every mock tool.
 - `uv run replaybook mcp` serves the workflow as MCP tools over stdio for an assistant.
 - `uv run replaybook mock-server --http --port 0` serves every mock tool on one MCP server over streamable HTTP; `tool-endpoint` is the function-calling door; `tools schema` prints the tool list as JSON Schema.
+- `uv run replaybook knowledge import|check|eval` makes a knowledge pack from a past-ticket search server, checks it through the guard and scores its search against history.
 - `uv run replaybook launchers` lists the launchers; `launchers show <name>` prints the command, config and prompt a launcher would use.
 - `uv run replaybook skills validate` checks every skill's verification checks; `labels sample`/`labels check` handle the escalation-label spot-check; `approval-request`, `live record`, `live report` and `live check` cover go-live.
 - `uv run replaybook --help` lists every command.
