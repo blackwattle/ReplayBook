@@ -45,9 +45,9 @@ tickets:
     id: Issue key              # required
     summary: Summary           # required
     description: Description   # required
-    reporter: Reporter         # required
     created: Created           # required
     status: Status             # required
+    reporter: Reporter         # optional: "unknown" when the export drops people
     resolved: Resolved
     resolution: Resolution
     assignee: Assignee
@@ -218,6 +218,34 @@ effort: {source: status_time, working_statuses: [In Progress, Reopened]}
 ```bash
 uv run replaybook postgres import --mapping warehouse.yaml --out data/warehouse
 ```
+
+**A query instead of a table.** Any section can name a `query` instead of a `table`: one
+SELECT (or WITH ... SELECT) you write, whose output columns the `columns` mapping names.
+Use it when the store's columns need shaping and you only have read access, so you cannot
+create a view: a store that dropped people for privacy has no reporter (select
+`'unknown' AS reporter`, or leave `reporter` out: it is optional), comment authors reduced
+to a flag become a role (`CASE WHEN is_bot THEN 'bot' ELSE 'other' END AS role`), a link
+table with both directions becomes one row per link. `where` and `limit` apply around the
+query.
+
+```yaml
+tickets:
+  query: |
+    SELECT t.key, t.title, t.body, t.opened_at, t.state, t.closed_at
+      FROM support.tickets t
+     WHERE t.project = 'OPS'
+  columns: {id: key, summary: title, description: body, created: opened_at,
+            status: state, resolved: closed_at}
+comments:
+  query: |
+    SELECT key, posted_at, body,
+           CASE WHEN is_bot THEN 'bot' ELSE 'other' END AS role
+      FROM support.comments
+  columns: {ticket_id: key, created: posted_at, body: body, role: role}
+```
+
+The import opens every connection read-only, so the session refuses a write whatever the
+mapping says.
 
 **Status-change history is required.** A RAG table often holds only the final text of a
 ticket. Without the transitions Replaybook cannot tell the tickets where engineers asked

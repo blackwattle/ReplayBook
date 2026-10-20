@@ -321,3 +321,75 @@ def test_links_table(tmp_path: Path) -> None:
     tickets = {t.id: t for t in load_tickets(tmp_path / "out")}
     assert [(x.type, x.target) for x in tickets["WH-2"].links] == [("duplicates", "WH-1")]
     assert [(x.type, x.target) for x in tickets["WH-1"].links] == [("relates", "OTHER-5")]
+
+
+def test_queries_shape_columns_a_read_only_user_cannot_change(tmp_path: Path) -> None:
+    """A RAG store without a reporter column or comment authors: the mapping shapes them in
+    a query, because a read-only import cannot create a view."""
+    ticket_query = (
+        "SELECT ticket_key, title, body, 'unknown' AS reporter, opened_at, state "
+        "FROM analytics.tickets"
+    )
+    comment_query = (
+        "SELECT ticket_key, posted_at, body, CASE WHEN author = 'bob' THEN 'engineer' "
+        "ELSE 'other' END AS role FROM analytics.ticket_comments"
+    )
+    tables = {
+        ticket_query: [
+            {**{k: v for k, v in row.items() if k != "requester"}, "reporter": "unknown"}
+            for row in TABLES["analytics.tickets"]
+        ],
+        comment_query: [
+            {
+                "ticket_key": "WH-2",
+                "posted_at": datetime(2026, 2, 3, 10, tzinfo=UTC),
+                "body": "Which environment?",
+                "role": "engineer",
+            }
+        ],
+    }
+    mapping = _mapping(
+        tmp_path,
+        tickets={
+            "query": ticket_query + ";",
+            "columns": {
+                "id": "ticket_key",
+                "summary": "title",
+                "description": "body",
+                "reporter": "reporter",
+                "created": "opened_at",
+                "status": "state",
+            },
+            "limit": 10,
+        },
+        comments={
+            "query": comment_query,
+            "columns": {
+                "ticket_id": "ticket_key",
+                "created": "posted_at",
+                "body": "body",
+                "role": "role",
+            },
+        },
+        status_changes=None,
+        actions=None,
+        allow_missing_history=True,
+    )
+    fetch = FakeFetch(tables)
+    postgres.import_tickets(mapping, tmp_path / "out", fetch=fetch)
+    assert fetch.calls[0][0] == ticket_query and fetch.calls[0][3] == 10
+    tickets = {t.id: t for t in load_tickets(tmp_path / "out")}
+    assert tickets["WH-1"].reporter == "unknown"
+    assert [c.role for c in tickets["WH-2"].comments] == ["engineer"]
+    assert postgres.build_query(ticket_query, ["title"], "state = 'Done'", 5) == (
+        f"SELECT \"title\" FROM ({ticket_query}) AS mapped WHERE state = 'Done' LIMIT 5"
+    )
+    for bad in (
+        {"table": "analytics.tickets", "query": ticket_query},
+        {"query": "DELETE FROM analytics.tickets"},
+        {"query": ticket_query + "; DROP TABLE x"},
+    ):
+        with pytest.raises(MappingError, match="table or query|one SELECT"):
+            postgres.PostgresMapping.load(
+                _mapping(tmp_path, tickets={**bad, "columns": {"id": "k"}})
+            )

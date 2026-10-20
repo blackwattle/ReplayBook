@@ -16,10 +16,10 @@ Shape of a mapping (every section but `tickets` is optional):
         id: Issue key
         summary: Summary
         description: Description
-        reporter: Reporter
         created: Created
         status: Status
-        resolved: Resolved           # optional from here on
+        reporter: Reporter           # optional from here on
+        resolved: Resolved
         resolution: Resolution
         assignee: Assignee
         priority: Priority
@@ -77,8 +77,12 @@ from replaybook.schema.ticket import (
     TicketLink,
 )
 
-REQUIRED = ("id", "summary", "description", "reporter", "created", "status")
+REQUIRED = ("id", "summary", "description", "created", "status")
+# reporter is optional: privacy-reduced exports (and many RAG stores) drop people. Without it
+# every ticket's reporter is "unknown", and comment roles come from a role column or the
+# engineers list instead.
 OPTIONAL = (
+    "reporter",
     "resolved",
     "resolution",
     "assignee",

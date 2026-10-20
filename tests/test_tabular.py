@@ -470,3 +470,28 @@ def test_link_types_must_map_to_a_canonical_kind(tmp_path: Path) -> None:
     _helpdesk(tmp_path)
     with pytest.raises(MappingError, match="link_types"):
         Mapping.load(_mapping(tmp_path, {"link_types": {"Duplicate": "same"}}))
+
+
+def test_reporter_is_optional_for_privacy_reduced_exports(tmp_path: Path) -> None:
+    rows = [{"id": "P-1", "title": "a", "body": "b", "at": "2026-01-01T00:00:00Z", "state": "Open"}]
+    (tmp_path / "rows.jsonl").write_text(json.dumps(rows[0]), encoding="utf-8")
+    mapping = tmp_path / "m.yaml"
+    mapping.write_text(
+        yaml.safe_dump(
+            {
+                "tickets": {
+                    "file": "rows.jsonl",
+                    "columns": {
+                        "id": "id",
+                        "summary": "title",
+                        "description": "body",
+                        "created": "at",
+                        "status": "state",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ticket,) = convert(Mapping.load(mapping))
+    assert ticket.reporter == "unknown"
