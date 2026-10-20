@@ -1,17 +1,34 @@
+# Use as a GitLab CI job in the repository that holds your agent and its packs.
+#
+# Prerequisites
+# -------------
+# 1. Your packs live in a directory on REPLAYBOOK_PACKS (default: packs/).
+# 2. Either commit testsets/<type>.json (generated once with `replaybook build-testset`)
+#    or generate them from a synthetic dataset in CI (shown below).
+#
 # Include from your .gitlab-ci.yml:
 #   include:
 #     - local: ci/gitlab-ci-replaybook-check.yml
+#
+# The image is tagged by short commit SHA on every green build of main:
+#   docker pull blackwattle/replaybook:latest          # always the newest green build
+#   docker pull blackwattle/replaybook:a373ce2         # pin to a specific commit
+# See https://hub.docker.com/r/blackwattle/replaybook/tags for all tags.
+
 replaybook-check:
   stage: test
-  image: ghcr.io/astral-sh/uv:0.13.1-python3.12-trixie-slim
+  image:
+    name: blackwattle/replaybook:a373ce2
+    entrypoint: [""]
   script:
-    - uv sync
-    - uv run replaybook generate --out data/generated --seed 42 --n 3000
-    - uv run replaybook build-testset --type kafka_topic --data data/generated --n 40
+    # Generate a synthetic dataset and build test cases from it.
+    # Skip these two lines and commit testsets/<type>.json if you want a fixed baseline.
+    - replaybook generate --out data/generated --seed 42 --n 3000
+    - replaybook build-testset --type kafka_topic --data data/generated --n 40
     # Exit 0 pass, 1 regression or critical failure, 2 error. Only differences are printed.
-    - uv run replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka --agent scripted
+    - replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka --agent scripted
   after_script:
-    - uv run replaybook evidence --run runs/check-kafka --out evidence/kafka || true
+    - replaybook evidence --run runs/check-kafka --out evidence/kafka || true
   artifacts:
     when: always
     paths:

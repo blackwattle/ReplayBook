@@ -1,0 +1,79 @@
+# GitLab CI job that scores a knowledge pack's search quality daily and on demand.
+#
+# `replaybook knowledge eval` imports your past tickets from a Postgres table and scores
+# the pack's search against the builtin keyword baseline on the same cases: for each
+# ticket, does the search (run at that ticket's creation time, behind the guard) find the
+# earlier tickets engineers linked or mentioned?
+#
+# Prerequisites
+# -------------
+# 1. A Postgres database with your tickets, comments, and links.
+#    See docs/ticket-sources.md for the mapping format.
+# 2. A knowledge pack in packs/<name>/ written by `replaybook knowledge import`.
+#    See docs/knowledge-sources.md.
+# 3. The pack's search server either:
+#    a. runs as a subprocess (stdio mode, set KNOWLEDGE_SERVER_SRC to its source path), or
+#    b. is reachable over HTTP (set KNOWLEDGE_SERVER_URL and KNOWLEDGE_SERVER_TOKEN).
+#
+# Secrets: pass PGPASSWORD (and PGHOST, PGPORT, PGDATABASE, PGUSER if not in the DSN)
+# via your CI's secret store. The job assembles POSTGRES_DSN in before_script.
+# No ticket data leaves the job: import and eval run in one step; only retrieval.md
+# and retrieval.json are uploaded as artifacts.
+#
+# Include from your .gitlab-ci.yml:
+#   include:
+#     - local: ci/gitlab-ci-knowledge-eval.yml
+#   variables:
+#     KNOWLEDGE_PACK_NAME: my_pack     # the name key from packs/my_pack/pack.yaml
+#     KNOWLEDGE_MAPPING: mapping/my_tickets.yaml
+#
+# The published image does not include psycopg (the postgres optional dependency).
+# It is installed in before_script from the standard PyPI index.
+
+variables:
+  KNOWLEDGE_PACK_NAME: ""            # set in your .gitlab-ci.yml or pipeline schedule
+  KNOWLEDGE_MAPPING: "mapping/tickets.yaml"
+  KNOWLEDGE_EVAL_OUT: "$CI_PROJECT_DIR/retrieval"
+  KNOWLEDGE_EVAL_DATA: "$CI_PROJECT_DIR/data/tickets"
+  REPLAYBOOK_PACKS: "$CI_PROJECT_DIR/packs"
+  REPLAYBOOK_AIRGAPPED: "false"
+
+knowledge-eval:
+  stage: test
+  image:
+    name: blackwattle/replaybook:a373ce2
+    entrypoint: [""]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "api"
+      when: manual
+  before_script:
+    # psycopg is not baked into the image; install it from PyPI.
+    - pip install --quiet "psycopg[binary]"
+    # Assemble DSN from individual env vars if POSTGRES_DSN is not already set.
+    # PGPASSWORD should come from your secret store (CI variable or Vault).
+    - |
+      if [ -z "$POSTGRES_DSN" ]; then
+        export POSTGRES_DSN="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT:-5432}/${PGDATABASE}?sslmode=${PGSSLMODE:-require}"
+      fi
+  script:
+    # Import tickets and run eval in one step so raw ticket text never reaches an artifact.
+    - replaybook postgres import --mapping "$KNOWLEDGE_MAPPING" --out "$KNOWLEDGE_EVAL_DATA"
+    - replaybook knowledge eval
+        --data "$KNOWLEDGE_EVAL_DATA"
+        --source builtin
+        --source "$KNOWLEDGE_PACK_NAME"
+        --out "$KNOWLEDGE_EVAL_OUT"
+        --workers 4
+    - grep -E "${KNOWLEDGE_PACK_NAME}:|Hit@5|builtin:" "$KNOWLEDGE_EVAL_OUT/retrieval.md" | head -5
+  after_script:
+    # Remove the imported ticket data; keep only the scores.
+    - rm -rf "$KNOWLEDGE_EVAL_DATA"
+  artifacts:
+    name: "knowledge-eval-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - retrieval/retrieval.md
+      - retrieval/retrieval.json
+    expire_in: 90 days

@@ -1,4 +1,10 @@
 # Copy to .github/workflows/replaybook-check.yml in the repository that holds your agent.
+#
+# The image is tagged by short commit SHA on every green build of main:
+#   docker pull blackwattle/replaybook:latest          # always the newest green build
+#   docker pull blackwattle/replaybook:a373ce2         # pin to a specific commit
+# See https://hub.docker.com/r/blackwattle/replaybook/tags for all tags.
+
 name: replaybook-check
 
 on:
@@ -9,16 +15,17 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    container:
+      image: blackwattle/replaybook:a373ce2
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync
-      # Build the test sets from your ticket export (or commit testsets/*.json and skip this).
-      - run: uv run replaybook generate --out data/generated --seed 42 --n 3000
-      - run: uv run replaybook build-testset --type kafka_topic --data data/generated --n 40
+      # Generate a synthetic dataset and build test cases from it.
+      # Skip these two steps and commit testsets/<type>.json if you want a fixed baseline.
+      - run: replaybook generate --out data/generated --seed 42 --n 3000
+      - run: replaybook build-testset --type kafka_topic --data data/generated --n 40
       # Exit 0 pass, 1 regression or critical failure, 2 error. Only differences are printed.
-      - run: uv run replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka --agent scripted
-      - run: uv run replaybook evidence --run runs/check-kafka --out evidence/kafka
+      - run: replaybook check --testset testsets/kafka_topic.json --out runs/check-kafka --agent scripted
+      - run: replaybook evidence --run runs/check-kafka --out evidence/kafka
         if: always()
       - uses: actions/upload-artifact@v4
         if: always()

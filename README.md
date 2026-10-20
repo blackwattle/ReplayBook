@@ -551,7 +551,21 @@ docker compose up --build                                                       
 ```
 
 A prebuilt image is published to Docker Hub by CI on every green build of `main`:
-`docker pull blackwattle/replaybook:latest` (each build is also tagged with its short commit).
+
+```bash
+docker pull blackwattle/replaybook:latest          # always the newest green build
+docker pull blackwattle/replaybook:a373ce2         # pin to a specific commit (short SHA)
+```
+
+Each build is tagged with both `latest` and the seven-character short commit SHA.
+See [Docker Hub](https://hub.docker.com/r/blackwattle/replaybook/tags) for all tags.
+
+The published image includes the `jira` optional dependency (pymongo) but **not** the `postgres`
+optional dependency (psycopg). If you use `replaybook postgres import`, install psycopg
+separately in your CI step: `pip install "psycopg[binary]"`. The `ci/` directory has
+ready-to-copy GitLab and GitHub Actions jobs for both the standard check workflow and the
+knowledge eval workflow.
+
 Build it yourself, as above, when you want to verify the SBOM against your own checkout.
 
 The image runs as a non-root user (uid 1000). On a Linux host, create the mounted directory
