@@ -29,6 +29,7 @@ Shape of a mapping (every section but `tickets` is optional):
         comments: Comments           # a JSON list in the cell, instead of a companion file
         status_changes: History
         actions: Actions
+        links: Links                 # a JSON list of {type, target}
         inventory: Inventory         # a JSON object: the CMDB snapshot the packs read
       list_separator: ";"
       datetime_format: null          # ISO 8601 when null; otherwise a strptime format
@@ -41,6 +42,11 @@ Shape of a mapping (every section but `tickets` is optional):
     actions:                         # companion table or JSONL: an audit log of tool calls
       file: actions.jsonl
       columns: {ticket_id: ticket_id, tool: tool, args: args, at: at}
+    links:                           # companion table, one row per link to another ticket
+      file: links.csv
+      columns: {ticket_id: Issue key, target: Linked issue, type: Link type}
+    link_types: {"Duplicate": duplicates, "Cloners": relates}   # else: "dup" -> duplicates,
+                                     # "fix" -> fixes, anything else -> relates
     status_map: {"Pending customer": "Waiting on Requester", "Done": "Resolved"}
     engineers: [alice, bob]          # authors treated as engineers (plus the assignee)
     effort:
@@ -55,7 +61,7 @@ import json
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import yaml
 
@@ -65,8 +71,10 @@ from replaybook.schema.ticket import (
     Comment,
     CommentRole,
     EngineerAction,
+    LinkType,
     StatusChange,
     Ticket,
+    TicketLink,
 )
 
 REQUIRED = ("id", "summary", "description", "reporter", "created", "status")
@@ -83,8 +91,11 @@ OPTIONAL = (
     "comments",
     "status_changes",
     "actions",
+    "links",
     "inventory",
 )
+COMPANIONS = ("comments", "status_changes", "actions", "links")
+LINK_KINDS: tuple[str, ...] = get_args(LinkType)
 CANONICAL_STATUSES = ("Open", "In Progress", "Waiting on Requester", "Resolved", "Closed")
 
 
@@ -203,7 +214,7 @@ class Mapping:
         self.list_separator = str(tickets.get("list_separator") or ";")
         self.datetime_format = tickets.get("datetime_format") or None
         self.companions: dict[str, tuple[Path, dict[str, str]]] = {}
-        for section in ("comments", "status_changes", "actions"):
+        for section in COMPANIONS:
             spec = data.get(section)
             if spec:
                 if "file" not in spec or "columns" not in spec:
@@ -213,6 +224,13 @@ class Mapping:
                     {str(k): str(v) for k, v in spec["columns"].items()},
                 )
         self.status_map = {str(k): str(v) for k, v in (data.get("status_map") or {}).items()}
+        self.link_types: dict[str, LinkType] = {}
+        for name, kind in (data.get("link_types") or {}).items():
+            if kind not in LINK_KINDS:
+                raise MappingError(
+                    f"link_types: '{name}' maps to '{kind}'; use {', '.join(LINK_KINDS)}"
+                )
+            self.link_types[str(name)] = kind
         self.engineers = {str(e) for e in (data.get("engineers") or [])}
         effort = data.get("effort") or {}
         self.effort_source = effort_mod.check_source(str(effort.get("source") or "logged"))
@@ -254,6 +272,35 @@ def _status(mapping: Mapping, value: Any) -> str:
     return mapping.status_map.get(text, text)
 
 
+def link_kind(mapping: Mapping, name: Any) -> LinkType:
+    """A source link type ('Duplicate', 'is duplicated by', 'Relates') as a canonical one:
+    the mapping's link_types first, then 'dup' -> duplicates, 'fix' -> fixes, else relates."""
+    text = str(name or "").strip()
+    if text in mapping.link_types:
+        return mapping.link_types[text]
+    lowered = text.lower()
+    if "dup" in lowered:
+        return "duplicates"
+    if "fix" in lowered:
+        return "fixes"
+    return "relates"
+
+
+def _links(mapping: Mapping, ticket_id: str, rows: list[dict[str, Any]]) -> list[TicketLink]:
+    """One link per (type, target), never to the ticket itself."""
+    seen: set[tuple[str, str]] = set()
+    links: list[TicketLink] = []
+    for row in rows:
+        target = str(row.get("target") or "").strip()
+        if not target or target == ticket_id:
+            continue
+        kind = link_kind(mapping, row.get("type"))
+        if (kind, target) not in seen:
+            seen.add((kind, target))
+            links.append(TicketLink(type=kind, target=target))
+    return links
+
+
 def _role(
     author: str, reporter: str, assignee: str | None, mapping: Mapping, given: Any
 ) -> CommentRole:
@@ -272,6 +319,7 @@ def row_to_ticket(
     comments: list[dict[str, Any]],
     changes: list[dict[str, Any]],
     actions: list[dict[str, Any]],
+    links: list[dict[str, Any]] | None = None,
 ) -> Ticket:
     col = mapping.columns
     fmt = mapping.datetime_format
@@ -303,6 +351,9 @@ def row_to_ticket(
         changes = changes + parse_embedded(get("status_changes"))
     if "actions" in col:
         actions = actions + parse_embedded(get("actions"))
+    links = list(links or [])
+    if "links" in col:
+        links = links + parse_embedded(get("links"))
 
     built_comments = [
         Comment(
@@ -362,6 +413,7 @@ def row_to_ticket(
         comments=sorted(built_comments, key=lambda c: c.created),
         status_changes=sorted(built_changes, key=lambda c: c.at),
         actions=sorted(built_actions, key=lambda a: a.at),
+        links=_links(mapping, ticket_id, links),
         time_spent_hours=hours,
         inventory=parse_object(get("inventory")) if "inventory" in col else {},
     )
@@ -377,6 +429,7 @@ def convert_rows(
     comments: dict[str, list[dict[str, Any]]],
     changes: dict[str, list[dict[str, Any]]],
     actions: dict[str, list[dict[str, Any]]],
+    links: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[Ticket]:
     """Rows already read (from files or a database) to redacted, sorted canonical tickets."""
     tickets: list[Ticket] = []
@@ -390,6 +443,7 @@ def convert_rows(
             comments.get(ticket_id, []),
             changes.get(ticket_id, []),
             actions.get(ticket_id, []),
+            (links or {}).get(ticket_id, []),
         )
         if ticket.id in seen:
             raise MappingError(f"duplicate ticket id {ticket.id}")
@@ -406,6 +460,7 @@ def convert(mapping: Mapping) -> list[Ticket]:
         _companion_rows(mapping, "comments"),
         _companion_rows(mapping, "status_changes"),
         _companion_rows(mapping, "actions"),
+        _companion_rows(mapping, "links"),
     )
 
 
@@ -446,6 +501,7 @@ def summarise(tickets: list[Ticket], mapping: Mapping) -> dict[str, Any]:
             any(c.to_status == "Waiting on Requester" for c in t.status_changes) for t in tickets
         ),
         "with_actions": sum(bool(t.actions) for t in tickets),
+        "with_links": sum(bool(t.links) for t in tickets),
         "with_effort": sum(t.time_spent_hours is not None for t in tickets),
         "effort_source": mapping.effort_source,
         "working_statuses": list(mapping.working_statuses),
@@ -489,6 +545,7 @@ Imported from `{mapping.tickets_file.name}` by `replaybook tickets import` with 
 | Status changes | {stats["status_changes"]} |
 | Tickets that waited on the requester | {stats["waited_on_requester"]} |
 | Tickets with recorded engineer actions | {stats["with_actions"]} |
+| Tickets with links to other tickets | {stats["with_links"]} |
 | Tickets with an effort figure | {stats["with_effort"]} |
 | Effort source | {effort_mod.describe(stats["effort_source"], stats["working_statuses"])} |
 

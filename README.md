@@ -11,7 +11,9 @@ work but must prove it is safe first. Everything runs on your own machines and n
 leaves your network.
 
 **Every tool pack in this repo is a local mock and nothing touches real infrastructure.**
-Reads answer from a small per-case world state; writes are recorded, never executed.
+Reads answer from a small per-case world state; writes are recorded, never executed. The
+one thing that may be live is a knowledge pack you add: read-only past-ticket search on
+your own server, behind the time-travel guard.
 
 ## Bring your own tools and ticket system
 
@@ -30,6 +32,9 @@ Replaybook does not care which tools your agent uses or where your tickets live.
   or ServiceNow. Each adapter says where effort comes from (logged time, time in working
   statuses, or created-to-resolved), so discovery can rank request types by the hours they
   really cost you.
+- **Past-ticket search.** If you already run a RAG server over your tickets, a *knowledge
+  pack* lets the agent under test use it during replay, behind the time-travel guard, and
+  `replaybook knowledge eval` scores how well it finds the tickets engineers linked.
 
 ## Shadow mode
 
@@ -40,7 +45,7 @@ agent's proposal against what they did. The evidence pack gets a shadow section:
 proposals were made, how many could be scored, the pass rate, and the unsafe proposals
 that were caught before the agent had any access.
 
-```powershell
+```bash
 uv run replaybook shadow record --type kafka_topic --data data/live --out shadow/kafka --agent external --command "python my_agent.py"
 # ... days later, after engineers resolved some of those tickets and the dataset was re-exported:
 uv run replaybook shadow score --data data/live --out shadow/kafka
@@ -54,7 +59,7 @@ duplicates or "won't do" are unscorable; tickets still open are pending.
 
 ## The ten-minute demo
 
-```powershell
+```bash
 uv sync
 uv run replaybook demo --out demo_out
 ```
@@ -121,7 +126,7 @@ Three kinds of agent can be put under test:
   collects the writes the servers recorded. `examples/external_agent/agent.py` is a tiny
   working example.
 
-```powershell
+```bash
 uv run replaybook generate --out data/generated --seed 42 --n 3000
 uv run replaybook build-testset --type kafka_topic --data data/generated --n 40
 uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-v1 --agent scripted --flaws guess_missing_info,superseded_procedure,unsafe_write
@@ -141,7 +146,7 @@ ticket prompt (argument, stdin, file or environment variable), a timeout, and wh
 the harness's built-in tools are switched off so it can only act through the recorded
 mock tools. Launchers ship for Claude Code, Codex CLI, Gemini CLI and OpenCode.
 
-```powershell
+```bash
 uv run replaybook launchers                                  # what is available and whether each CLI is on PATH
 uv run replaybook launchers show claude-code --testset testsets/kafka_topic.json   # dry run: the exact command, config file and prompt
 uv run replaybook replay --testset testsets/kafka_topic.json --out runs/kafka-claude --agent claude-code
@@ -199,7 +204,7 @@ framework that uses a provider's native function calling instead of MCP. Two mor
 open onto the same world state, the same call recorder and the same time-travel guard, so
 scores are comparable whichever one the agent used:
 
-```powershell
+```bash
 uv run replaybook mock-server --http --port 8765 --world world.json --record calls.jsonl   # every mock tool on one MCP server at http://127.0.0.1:8765/mcp
 uv run replaybook tool-endpoint --port 8766 --world world.json --record calls.jsonl        # GET /tools (JSON Schema), POST /tools/<name>
 uv run replaybook tools schema --shape openai                                             # the tool list in the function-calling shape
@@ -222,7 +227,7 @@ else.
 
 Before writing any skill, find out which request types cost the most engineer time:
 
-```powershell
+```bash
 uv run replaybook discover --data data/generated --out discovery
 ```
 
@@ -241,7 +246,7 @@ spot-checked and its run is approved as the baseline. After go-live, every live 
 approved by a person against an approval request that shows the evidence, and the team's
 runtime reports each run back so the skill keeps being scored.
 
-```powershell
+```bash
 uv run replaybook accept --suggest --run runs/kafka-v2
 uv run replaybook accept --group G1 --run runs/kafka-v2 --reason "History predates the KRaft move" --approver ben --kind outdated_history
 uv run replaybook approve --run runs/kafka-v2 --approver ben
@@ -303,7 +308,7 @@ uv run replaybook evidence --run runs/check-kafka --testset testsets/kafka_topic
 The universal fallback is a table. Write a column mapping once (`docs/ticket-sources.md`
 documents every field, with the payroll example as a worked case) and import:
 
-```powershell
+```bash
 uv run replaybook tickets import --mapping examples/payroll/csv/mapping.yaml --out data/payroll
 ```
 
@@ -330,12 +335,12 @@ are no ask cases and an agent that never asks would look fine.
 Synthetic history proves the harness; real history shows what breaks. Two adapters turn
 Jira issues into canonical tickets through one shared conversion (`jira_issue.py`):
 
-```powershell
+```bash
 # The Public Jira Dataset (Zenodo 10.5281/zenodo.5882881, CC BY 4.0): restore only the
 # collection you need into a local MongoDB with the compose `jira` profile, then export
 # one ops-style project. A .bson collection file or a .jsonl of issues works without a database.
 docker compose --profile jira up -d mongo
-$env:JIRA_DUMP_DIR = "D:\datasets\ThePublicJiraDataset. DataDump"
+export JIRA_DUMP_DIR="/data/datasets/ThePublicJiraDataset. DataDump"
 docker compose --profile jira run --rm jira-restore
 uv run replaybook public-jira export --input "mongodb://127.0.0.1:27017/JiraReposAnon?collection=Apache" --project INFRA --out data/public_jira/infra
 
@@ -367,6 +372,39 @@ cut at that instant, the status as it was then, and never the ticket under test.
 seeds a leak (a later ticket quoting the answer, the test ticket's own resolution, a
 long-running ticket whose answer arrived later) and proves none of it comes back. Point
 your own RAG at the same rule: filter on creation time, strictly before the ticket's.
+
+## Your own past-ticket search: knowledge packs
+
+If your team already runs a retrieval server over its ticket history (a RAG index behind an
+MCP server), the agent under test should use that, with its real tools and ranking. A
+**knowledge pack** serves the server's read-only tools behind the same guard: Replaybook
+forwards each call and, before the agent sees anything, drops the ticket under test, every
+ticket created after it and anything it cannot date; removes resolutions that arrived after
+the horizon, comments written after it and fields that reveal the present (age, scores);
+answers "similar to" and "get" tools only for visible tickets; over-fetches so filtering does
+not leave the agent short; and, when the server has an "as of" argument, sets it to the
+horizon and hides it from the agent.
+
+```bash
+uv run replaybook knowledge import --name ticket_rag --url '${TICKET_RAG_URL}' --header 'Authorization=Bearer ${TICKET_RAG_TOKEN}' --out packs
+uv run replaybook knowledge check ticket_rag --query "certificate expired on the load balancer"
+uv run replaybook knowledge eval --data data/warehouse --source builtin --source ticket_rag --out retrieval
+```
+
+`import` lists the tools and writes the pack with a guard section to fill in (where the
+server keeps each ticket's id, creation and resolution time); `check` validates it and runs
+one search through the guard, showing what was removed and why; `eval` scores the search
+before any agent is involved: for the newest tickets that engineers linked to earlier ones
+(or mentioned them in a comment), does a search with the ticket as filed, at its creation
+time, find them? Hit rate, recall, MRR and nDCG at k, side by side with Replaybook's own
+keyword search, each hit rate with a 95% interval and every source compared with the first
+ticket by ticket, plus the leaks the guard had to remove. Then put the pack on
+`REPLAYBOOK_PACKS` and replay as usual: external agents, launchers and the skill agent all
+get its tools. A live index changes, so `cache: record` keeps the server's answers and
+`cache: replay` pins them for baselines and CI (the default, `off`, writes nothing); every run
+records which knowledge packs it read and whether their answers were live or pinned, and the
+evidence pack says so. `docs/knowledge-sources.md` has the details and a worked example with a fake
+server in `examples/ticket_rag/`.
 
 ## How scoring works
 
@@ -441,7 +479,7 @@ render` and `replaybook checks compare` give it the rendered check and the verdi
 To make a pack from your own MCP server, let Replaybook list its tools and generate the
 recording mock and a scoring skeleton, then edit the two YAML files:
 
-```powershell
+```bash
 uv run replaybook tools import --name payroll --command "python path/to/payroll_server.py" --out packs
 uv run replaybook tools import --name payroll --json saved-tools-list.json --out packs   # from a saved tools/list result
 ```
@@ -501,9 +539,9 @@ Replaybook is meant to run inside your network. The image is offline by default,
 by default, sends no telemetry, runs as a non-root user and ships its own software bill of
 materials.
 
-```powershell
+```bash
 docker build -t replaybook .
-docker run --rm --network none -v "${PWD}/demo_out:/work/demo_out" replaybook   # the demo
+docker run --rm --network none -v "$PWD/demo_out:/work/demo_out" replaybook     # the demo
 docker run --rm --network none replaybook status                                # what it can reach
 docker compose up --build                                                       # the demo through compose
 ```
@@ -546,7 +584,7 @@ them on purpose.
 
 ## Development
 
-```powershell
+```bash
 uv sync --all-groups
 uv run ruff check .
 uv run ruff format --check .

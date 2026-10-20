@@ -41,12 +41,15 @@ NETWORK_MODULES = {
     "starlette",
     "mcp.client.client",
     "mcp.client.streamable_http",
+    "mcp.shared._httpx_utils",
 }
 # The model client probes Ollama and calls LiteLLM; the guard patches the socket module;
 # the Jira Cloud, Postgres and ServiceNow adapters are explicit exports from a system the
 # user configures; the two HTTP doors (mock servers over streamable HTTP, the function-
 # calling endpoint) listen on a local port and never connect out; `tools import --url`
-# connects to the one MCP server the user names. Air-gapped mode governs all of them.
+# connects to the one MCP server the user names, and so does a knowledge pack's connection
+# to the team's own past-ticket search (read-only tools only). Air-gapped mode governs all
+# of them.
 MAY_USE_THE_NETWORK = {
     SRC / "llm" / "client.py",
     SRC / "netguard.py",
@@ -56,6 +59,7 @@ MAY_USE_THE_NETWORK = {
     SRC / "mock_env" / "serve.py",
     SRC / "mock_env" / "http_tools.py",
     SRC / "tools_import.py",
+    SRC / "mock_env" / "remote.py",
 }
 
 

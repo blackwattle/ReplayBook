@@ -392,3 +392,81 @@ def test_status_time_handles_open_tail() -> None:
     assert effort.status_time_hours(ticket) == 4.0, (
         "an unterminated working status ends at resolution"
     )
+
+
+def test_links_from_a_companion_table_and_an_embedded_column(tmp_path: Path) -> None:
+    """Links are the ground truth `knowledge eval` scores past-ticket search against."""
+    _helpdesk(tmp_path)
+    _write_csv(
+        tmp_path / "links.csv",
+        ["Key", "Other", "Kind"],
+        [
+            ["HD-2", "HD-1", "Duplicate"],
+            ["HD-2", "HD-1", "is duplicated by"],  # the same link seen from both ends
+            ["HD-2", "HD-2", "Relates"],  # a link to itself is dropped
+            ["HD-2", "HD-9", "Cloners"],
+            ["HD-1", "HD-7", "Problem/Incident"],
+        ],
+    )
+    mapping = _mapping(
+        tmp_path,
+        {
+            "links": {
+                "file": "links.csv",
+                "columns": {"ticket_id": "Key", "target": "Other", "type": "Kind"},
+            },
+            "link_types": {"Problem/Incident": "fixes"},
+        },
+    )
+    stats = import_tickets(mapping, tmp_path / "out")
+    tickets = {t.id: t for t in load_tickets(tmp_path / "out")}
+    assert [(link.type, link.target) for link in tickets["HD-2"].links] == [
+        ("duplicates", "HD-1"),
+        ("relates", "HD-9"),
+    ]
+    assert [(link.type, link.target) for link in tickets["HD-1"].links] == [("fixes", "HD-7")]
+    assert stats["with_links"] == 2
+    assert "Tickets with links to other tickets | 2" in (tmp_path / "out" / "DATASET.md").read_text(
+        encoding="utf-8"
+    )
+
+    rows = [
+        {
+            "id": "J-1",
+            "title": "a",
+            "body": "b",
+            "by": "x",
+            "at": "2026-01-01T00:00:00Z",
+            "state": "Open",
+            "links": [{"type": "Blocks", "target": "J-0"}],
+        },
+    ]
+    (tmp_path / "rows.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    embedded = tmp_path / "embedded.yaml"
+    embedded.write_text(
+        yaml.safe_dump(
+            {
+                "tickets": {
+                    "file": "rows.jsonl",
+                    "columns": {
+                        "id": "id",
+                        "summary": "title",
+                        "description": "body",
+                        "reporter": "by",
+                        "created": "at",
+                        "status": "state",
+                        "links": "links",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ticket,) = convert(Mapping.load(embedded))
+    assert [(link.type, link.target) for link in ticket.links] == [("relates", "J-0")]
+
+
+def test_link_types_must_map_to_a_canonical_kind(tmp_path: Path) -> None:
+    _helpdesk(tmp_path)
+    with pytest.raises(MappingError, match="link_types"):
+        Mapping.load(_mapping(tmp_path, {"link_types": {"Duplicate": "same"}}))

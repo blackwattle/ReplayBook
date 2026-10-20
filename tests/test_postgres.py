@@ -303,3 +303,21 @@ def test_cli_reports_and_warns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     )
     assert allowed.exit_code == 0, allowed.output
     assert "WARNING: no status-change history" in allowed.output
+
+
+def test_links_table(tmp_path: Path) -> None:
+    tables = dict(TABLES)
+    tables["analytics.ticket_links"] = [
+        {"ticket_key": "WH-2", "linked_key": "WH-1", "link_type": "Duplicate"},
+        {"ticket_key": "WH-1", "linked_key": "OTHER-5", "link_type": "Relates"},
+    ]
+    links = {
+        "table": "analytics.ticket_links",
+        "columns": {"ticket_id": "ticket_key", "target": "linked_key", "type": "link_type"},
+    }
+    fetch = FakeFetch(tables)
+    postgres.import_tickets(_mapping(tmp_path, links=links), tmp_path / "out", fetch=fetch)
+    assert "analytics.ticket_links" in {c[0] for c in fetch.calls}
+    tickets = {t.id: t for t in load_tickets(tmp_path / "out")}
+    assert [(x.type, x.target) for x in tickets["WH-2"].links] == [("duplicates", "WH-1")]
+    assert [(x.type, x.target) for x in tickets["WH-1"].links] == [("relates", "OTHER-5")]

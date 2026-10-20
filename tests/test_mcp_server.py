@@ -34,6 +34,7 @@ EXPECTED_TOOLS = {
     "replaybook_skills_validate",
     "replaybook_live_report",
     "replaybook_approval_request",
+    "replaybook_knowledge_eval",
 }
 
 

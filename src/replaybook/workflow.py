@@ -703,10 +703,75 @@ def packs() -> dict[str, Any]:
                     {"key": k, "label": v.label, "skill": v.skill is not None}
                     for k, v in p.request_types.items()
                 ],
+                "knowledge": p.knowledge.server.describe() if p.knowledge else None,
             }
             for p in reg.packs
         ],
     }
+
+
+def knowledge_eval(
+    data: Path = DEFAULT_DATA_DIR,
+    sources: list[str] | None = None,
+    out: Path = Path("retrieval"),
+    n: int = 200,
+    k: int = 10,
+    since: str = "",
+    until: str = "",
+    query_chars: int = 1000,
+    workers: int = 4,
+) -> dict[str, Any]:
+    """Score past-ticket search (builtin and/or knowledge packs) against the tickets each
+    ticket's links and comments point to, at each ticket's creation time."""
+    from datetime import UTC, datetime
+
+    from replaybook.eval.retrieval import REPORT_FILE, evaluate
+
+    def day(value: str, name: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value).replace(tzinfo=UTC)
+        except ValueError as exc:
+            raise WorkflowError(f"{name} must be a date like 2025-01-31") from exc
+
+    data = Path(data)
+    if not (data / "tickets.jsonl").is_file():
+        raise WorkflowError(f"no tickets.jsonl in {data}")
+    try:
+        result = evaluate(
+            data,
+            list(sources or []),
+            Path(out),
+            n=n,
+            k=k,
+            since=day(since, "since"),
+            until=day(until, "until"),
+            query_chars=query_chars,
+            workers=workers,
+        )
+    except ValueError as exc:
+        raise WorkflowError(str(exc)) from exc
+    lines = []
+    for name, summary in result["sources"].items():
+        metrics = summary["metrics"]
+        line = (
+            f"{name}: hit@{k} {metrics.get(f'hit@{k}', 0):.0%}, recall@{k} "
+            f"{metrics.get(f'recall@{k}', 0):.0%}, MRR {metrics.get('mrr', 0):.3f} over "
+            f"{summary['cases'] - summary['errors']} of {summary['cases']} tickets"
+        )
+        if summary["guard"] is not None:
+            line += f"; guard removed {summary['guard']['leaks']} leaked results"
+        compared = result["comparison"].get(name)
+        if compared is not None:
+            line += (
+                f"; against {result['baseline']}: higher on {compared['better']}, lower on "
+                f"{compared['worse']}, same on {compared['same']} (sign test p "
+                f"{compared['sign_test_p']:.3g})"
+            )
+        lines.append(line)
+    result["message"] = "\n".join(lines) + f"\nreport: {Path(out) / REPORT_FILE}"
+    return result
 
 
 def labels_sample(

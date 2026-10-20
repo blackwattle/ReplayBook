@@ -74,7 +74,7 @@ why the labels stay unverified until a person spot-checks them.
 
 Rule labels count for the go-live gate only after a person has checked a sample:
 
-```powershell
+```bash
 uv run replaybook labels sample --testset testsets/kafka_topic.json --out review.md
 uv run replaybook labels check --testset testsets/kafka_topic.json --reviewer "Ben Prior"
 uv run replaybook labels check --testset testsets/kafka_topic.json --reviewer "Ben Prior" --set OPS-2041=escalate --note "needs CAB in prod"

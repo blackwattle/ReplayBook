@@ -470,6 +470,39 @@ def _recommendation(bundles: list[RunBundle], gate: str, critical_gate: str = "P
     )
 
 
+def knowledge_limitations(environments: list[dict[str, Any]]) -> list[str]:
+    """One line per knowledge pack the runs could read: the one live source a replay may
+    use. Pinned answers (cache: replay) are reproducible and say which cache they came from;
+    anything else read a live index that may have changed since."""
+    seen: dict[str, dict[str, Any]] = {}
+    for environment in environments:
+        for name, pack in (environment.get("knowledge_packs") or {}).items():
+            seen.setdefault(name, pack)
+            if pack.get("cache") != "replay":
+                seen[name] = pack  # one live run makes the pack live in this pack of evidence
+    items = []
+    for name, pack in sorted(seen.items()):
+        where = f"{pack.get('server')} over {pack.get('transport')}"
+        if pack.get("cache") == "replay":
+            items.append(
+                f"The agent could search past tickets through the knowledge pack '{name}' "
+                f"({where}). Every answer came from recorded responses (cache sha256 "
+                f"{str(pack.get('cache_sha256'))[:12]}), behind the time-travel guard, so a "
+                "re-run with the same cache sees the same results. The server's ranking was "
+                "recorded, not checked: an index built after the tickets may rank with text "
+                "written later."
+            )
+        else:
+            items.append(
+                f"The agent could search past tickets through the knowledge pack '{name}' "
+                f"({where}), a live index read behind the time-travel guard. Only tickets "
+                "created before each case's ticket were returned, but the index may have changed "
+                "since, so a re-run can see different search results; set `cache: replay` in the "
+                "pack to pin them. The server's ranking may use text written after the horizon."
+            )
+    return items
+
+
 def _limitations(inputs: EvidenceInputs, today: date) -> list[str]:
     items = [
         "The environment is a mock. Reads answer from a small per-case world state and writes "
@@ -574,6 +607,7 @@ def _limitations(inputs: EvidenceInputs, today: date) -> list[str]:
             "Some model costs were reported by the gateway rather than measured by Replaybook; "
             "the gateway's own accounting is the authority for them."
         )
+    items.extend(knowledge_limitations([b.run.environment for b in inputs.bundles]))
     if inputs.shadow is not None:
         items.append(
             "Shadow results score proposals the agent made against the mock environment at the "

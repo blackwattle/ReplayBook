@@ -1,0 +1,55 @@
+# Knowledge pack for the fake ticket-search server in examples/ticket_rag/server.py: the
+# worked example of docs/knowledge-sources.md. `replaybook knowledge import` wrote the
+# skeleton and tools.json; a person filled in where each tool keeps its tickets.
+#
+#   export TICKET_RAG_DATA=data/generated        # the dataset the server searches
+#   export REPLAYBOOK_PACKS=packs:examples/ticket_rag/packs
+#   uv run replaybook knowledge check ticket_rag --query "kafka topic"
+#   uv run replaybook knowledge eval --data data/generated --source builtin --source ticket_rag
+name: ticket_rag
+description: Past tickets from the team's own search server
+knowledge:
+  server:
+    # Started over stdio in this directory. A server that is already running is reached
+    # with url: (and headers: for its token, written as ${VARIABLE} from .env) instead.
+    command: [python, ../../server.py, --data, "${TICKET_RAG_DATA}"]
+    timeout_s: 60
+  # off (the default): every call is live. record: keep the server's raw answers in .cache/
+  # and reuse them. replay: recorded answers only, for a reproducible or offline re-run.
+  cache: off
+  search: search_tickets
+  lookup: get_ticket
+  tools:
+    search_tickets:
+      query_arg: query
+      results: results
+      count_field: count
+      id: key
+      created: created
+      resolved: resolved
+      until_resolved: [resolution_note, status]
+      remove: [age_days, score]
+      limit_arg: top_k
+      max_limit: 20
+      as_of_arg: created_before
+      as_of_format: datetime
+    find_similar_tickets:
+      ticket_arg: ticket_key
+      results: results
+      count_field: count
+      id: key
+      created: created
+      resolved: resolved
+      until_resolved: [resolution_note, status]
+      remove: [age_days, score]
+      limit_arg: top_k
+      max_limit: 20
+    get_ticket:
+      ticket_arg: ticket_key
+      result: ticket
+      id: key
+      created: created
+      resolved: resolved
+      until_resolved: [resolution_note, status]
+      timed: {comments: at}
+      remove: [links]

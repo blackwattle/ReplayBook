@@ -5,8 +5,9 @@ Every tool here calls the same function the CLI command of that name calls
 (`replaybook.workflow`), with the same arguments, and reads and writes the same files on
 disk relative to the directory the server was started in. The tools cover the workflow:
 generate, build a test set, replay, report, groups, check, evidence, shadow record, score
-and report, plus read-only tools: the packs and launchers, skill validation, the label
-sample to spot-check and, after go-live, each skill's live rates. Results carry the result
+and report, and the past-ticket search eval, plus read-only tools: the packs and
+launchers, skill validation, the label sample to spot-check and, after go-live, each
+skill's live rates. Results carry the result
 line ("passed X of N (A matched, B correctly escalated, C accepted)") and the go-live gate.
 Recording a live run is the team's runtime's job, not a tool here. Sign-off actions
 (`accept`, `approve`, `labels check`) are deliberately not tools: an accepted difference,
@@ -154,6 +155,37 @@ def build_server() -> MCPServer:
         """The result line and go-live gate of a finished run, every case that did not pass
         with its outcome and reason, and the correct escalations."""
         return _guard(workflow.report, run_dir, labels_file, min_pass_rate)
+
+    @server.tool(annotations=WRITES)
+    def replaybook_knowledge_eval(
+        data: str = str(DEFAULT_DATA_DIR),
+        sources: list[str] | None = None,
+        out: str = "retrieval",
+        n: int = 200,
+        k: int = 10,
+        since: str = "",
+        until: str = "",
+        query_chars: int = 1000,
+        workers: int = 4,
+    ) -> dict[str, Any]:
+        """Score past-ticket search against history before any agent uses it: for the newest
+        n tickets with links to (or mentions of) earlier tickets, search with the ticket as
+        filed at its creation time, behind the time-travel guard, and report hit rate,
+        recall, MRR and nDCG at k. sources: "builtin" (Replaybook's keyword search) and/or
+        knowledge packs by name, compared side by side; a knowledge pack also reports the
+        leaked results the guard removed. Writes retrieval.md and retrieval.json to out."""
+        return _guard(
+            workflow.knowledge_eval,
+            data,
+            sources,
+            out,
+            n,
+            k,
+            since,
+            until,
+            query_chars,
+            workers,
+        )
 
     @server.tool(annotations=READS)
     def replaybook_skills_validate(request_type: str = "") -> dict[str, Any]:

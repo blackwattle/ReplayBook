@@ -12,7 +12,7 @@ needs a person's approval; nothing in `replaybook mcp` approves or records an ap
 Before a person approves a skill's writes on a live ticket, the runtime asks Replaybook for
 what the approver should see:
 
-```powershell
+```bash
 uv run replaybook approval-request --skill kafka_topic --ticket OPS-4211 --plan plan.json --out approvals/OPS-4211
 uv run replaybook approval-request --skill kafka_topic --plan plan.json --out approvals/x --runs runs --evidence evidence --live-dir live
 ```
@@ -51,7 +51,7 @@ back with the run (`replaybook live record`). `replaybook mcp` can render reques
 
 The runtime reports each run as JSON:
 
-```powershell
+```bash
 uv run replaybook live record --run run.json                 # or --run - to read stdin
 uv run replaybook live record --run run.json --live-dir live --discovery discovery/discovery.json
 ```
@@ -108,7 +108,7 @@ guessed.
 
 ## Rolling rates and the degraded flag
 
-```powershell
+```bash
 uv run replaybook live report                   # every skill
 uv run replaybook live report --skill kafka_topic --window 50
 uv run replaybook live check                    # exit 1 when a skill is degraded

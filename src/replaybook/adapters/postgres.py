@@ -23,6 +23,9 @@ import refuses unless told to proceed, and then warns in the terminal and the da
     actions:                        # optional audit log of tool calls
       table: analytics.ticket_actions
       columns: {ticket_id: ticket_key, tool: tool, args: args, at: at}
+    links:                          # optional links between tickets
+      table: analytics.ticket_links
+      columns: {ticket_id: ticket_key, target: linked_key, type: link_type}
     status_map: {"Pending customer": "Waiting on Requester"}
     engineers: [alice]
     effort: {source: status_time, working_statuses: [In Progress]}
@@ -72,7 +75,7 @@ class PostgresMapping:
             "list_separator": tickets.get("list_separator", ";"),
             "datetime_format": tickets.get("datetime_format"),
         }
-        for section in ("comments", "status_changes", "actions"):
+        for section in tabular.COMPANIONS:
             spec = data.get(section)
             if spec:
                 if "table" not in spec or "columns" not in spec:
@@ -166,7 +169,7 @@ def read_tickets(mapping: PostgresMapping, fetch: Fetch) -> list[Ticket]:
         mapping.tables["tickets"], list(tab.columns.values()), mapping.where, mapping.limit
     )
     companions: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for section in ("comments", "status_changes", "actions"):
+    for section in tabular.COMPANIONS:
         if section not in mapping.tables:
             continue
         _path, columns = tab.companions[section]
@@ -184,6 +187,7 @@ def read_tickets(mapping: PostgresMapping, fetch: Fetch) -> list[Ticket]:
         companions.get("comments", {}),
         companions.get("status_changes", {}),
         companions.get("actions", {}),
+        companions.get("links", {}),
     )
 
 
