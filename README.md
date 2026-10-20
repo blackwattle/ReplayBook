@@ -410,6 +410,9 @@ records which knowledge packs it read and whether their answers were live or pin
 evidence pack says so. `docs/knowledge-sources.md` has the details and a worked example with a fake
 server in `examples/ticket_rag/`.
 
+Invalid pack configuration makes `knowledge eval` exit with a usage error (code 2),
+including when `--agent` is enabled.
+
 ## How scoring works
 
 Recorded writes are compared with the actions engineers took, after per-tool

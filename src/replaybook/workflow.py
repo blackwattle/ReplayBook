@@ -757,6 +757,7 @@ def knowledge_eval(
     from datetime import UTC, datetime
 
     from replaybook.eval.retrieval import REPORT_FILE, evaluate
+    from replaybook.packs import PackError
 
     def day(value: str, name: str) -> datetime | None:
         if not value:
@@ -769,10 +770,10 @@ def knowledge_eval(
     data = Path(data)
     if not (data / "tickets.jsonl").is_file():
         raise WorkflowError(f"no tickets.jsonl in {data}")
-    agent_under_test = None
-    if agent:
-        agent_under_test = research_agent(agent, request_type, command, transport)
     try:
+        agent_under_test = None
+        if agent:
+            agent_under_test = research_agent(agent, request_type, command, transport)
         result = evaluate(
             data,
             list(sources or []),
@@ -786,7 +787,7 @@ def knowledge_eval(
             agent=agent_under_test,
             agent_name=agent,
         )
-    except ValueError as exc:
+    except (PackError, ValueError) as exc:
         raise WorkflowError(str(exc)) from exc
     lines = []
     for name, summary in result["sources"].items():
