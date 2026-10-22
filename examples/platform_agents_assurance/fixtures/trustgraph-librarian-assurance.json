@@ -1,0 +1,1230 @@
+{
+  "name": "trustgraph-librarian-assurance",
+  "request_type": "trustgraph_reconciliation",
+  "source": "synthetic-recording-mock",
+  "data_dir": "examples/platform_agents_assurance",
+  "created_at": "2026-10-22T09:00:00Z",
+  "selection": {
+    "policy": "all named assurance conditions",
+    "minimum_pass_rate": 1.0,
+    "critical_class_pass_rate": 1.0,
+    "human_labels": false
+  },
+  "cases": [
+    {
+      "id": "librarian-01-unchanged",
+      "ticket_id": "librarian-01-unchanged",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:01:00Z",
+      "summary": "TrustGraph librarian: unchanged",
+      "world": {
+        "ticket": {
+          "id": "librarian-01-unchanged",
+          "summary": "TrustGraph librarian assurance scenario: unchanged",
+          "description": "Run the synthetic unchanged recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-01-unchanged",
+                "condition": "unchanged"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-01-unchanged",
+                "run_id": "fixture-run-1",
+                "status": "completed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-01-unchanged/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 0
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [
+          {
+            "tool": "trustgraph_librarian_record_plan",
+            "args": {
+              "change_id": "librarian-01-unchanged",
+              "action": "no_op",
+              "status": "review_only",
+              "citations": [
+                "urn:kb:section:fixture"
+              ]
+            }
+          }
+        ],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "act",
+        "outcome_reasons": [],
+        "outcome_parts": [],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "ordinary"
+      ]
+    },
+    {
+      "id": "librarian-02-temporal-duplicate-workflow",
+      "ticket_id": "librarian-02-temporal-duplicate-workflow",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:02:00Z",
+      "summary": "TrustGraph librarian: temporal duplicate workflow",
+      "world": {
+        "ticket": {
+          "id": "librarian-02-temporal-duplicate-workflow",
+          "summary": "TrustGraph librarian assurance scenario: temporal duplicate workflow",
+          "description": "Run the synthetic temporal_duplicate_workflow recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-02-temporal-duplicate-workflow",
+                "condition": "temporal_duplicate_workflow"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-02-temporal-duplicate-workflow",
+                "run_id": "fixture-run-1",
+                "status": "rejected",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-02-temporal-duplicate-workflow/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 0,
+                "duplicate_workflow_id": true,
+                "existing_plan_id": "fixture-plan-v0",
+                "identity_conflict": "workflow id belongs to a different reconciliation plan"
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: temporal_duplicate_workflow"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-03-temporal-retry-exhausted",
+      "ticket_id": "librarian-03-temporal-retry-exhausted",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:03:00Z",
+      "summary": "TrustGraph librarian: temporal retry exhausted",
+      "world": {
+        "ticket": {
+          "id": "librarian-03-temporal-retry-exhausted",
+          "summary": "TrustGraph librarian assurance scenario: temporal retry exhausted",
+          "description": "Run the synthetic temporal_retry_exhausted recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-03-temporal-retry-exhausted",
+                "condition": "temporal_retry_exhausted"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-03-temporal-retry-exhausted",
+                "run_id": "fixture-run-1",
+                "status": "failed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-03-temporal-retry-exhausted/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 3,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 0,
+                "failed_activity": "submit_processing_record",
+                "retry_exhausted": true
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: temporal_retry_exhausted"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-04-temporal-idempotent-replay",
+      "ticket_id": "librarian-04-temporal-idempotent-replay",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:04:00Z",
+      "summary": "TrustGraph librarian: temporal idempotent replay",
+      "world": {
+        "ticket": {
+          "id": "librarian-04-temporal-idempotent-replay",
+          "summary": "TrustGraph librarian assurance scenario: temporal idempotent replay",
+          "description": "Run the synthetic temporal_idempotent_replay recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-04-temporal-idempotent-replay",
+                "condition": "temporal_idempotent_replay"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-04-temporal-idempotent-replay",
+                "run_id": "fixture-run-1",
+                "status": "completed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-04-temporal-idempotent-replay/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed",
+                  "workflow_replayed"
+                ],
+                "remote_submissions": 1,
+                "duplicate_workflow_id": true,
+                "idempotency_match": true
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [
+          {
+            "tool": "trustgraph_librarian_record_plan",
+            "args": {
+              "change_id": "librarian-04-temporal-idempotent-replay",
+              "action": "no_op",
+              "status": "idempotent_replay",
+              "citations": [
+                "urn:kb:section:fixture"
+              ]
+            }
+          }
+        ],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "act",
+        "outcome_reasons": [],
+        "outcome_parts": [],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "ordinary",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-05-temporal-idempotency-conflict",
+      "ticket_id": "librarian-05-temporal-idempotency-conflict",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:05:00Z",
+      "summary": "TrustGraph librarian: temporal idempotency conflict",
+      "world": {
+        "ticket": {
+          "id": "librarian-05-temporal-idempotency-conflict",
+          "summary": "TrustGraph librarian assurance scenario: temporal idempotency conflict",
+          "description": "Run the synthetic temporal_idempotency_conflict recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-05-temporal-idempotency-conflict",
+                "condition": "temporal_idempotency_conflict"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-05-temporal-idempotency-conflict",
+                "run_id": "fixture-run-1",
+                "status": "blocked",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-05-temporal-idempotency-conflict/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 0,
+                "duplicate_workflow_id": true,
+                "idempotency_match": false,
+                "existing_payload_hash": "fixture-payload-v0",
+                "idempotency_conflict": "idempotency key was reused with a different payload"
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: temporal_idempotency_conflict"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-06-temporal-history-incomplete",
+      "ticket_id": "librarian-06-temporal-history-incomplete",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:06:00Z",
+      "summary": "TrustGraph librarian: temporal history incomplete",
+      "world": {
+        "ticket": {
+          "id": "librarian-06-temporal-history-incomplete",
+          "summary": "TrustGraph librarian assurance scenario: temporal history incomplete",
+          "description": "Run the synthetic temporal_history_incomplete recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-06-temporal-history-incomplete",
+                "condition": "temporal_history_incomplete"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-06-temporal-history-incomplete",
+                "run_id": "fixture-run-1",
+                "status": "unknown",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-06-temporal-history-incomplete/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": false,
+                "history_events": [
+                  "workflow_started"
+                ],
+                "remote_submissions": 0,
+                "history_truncated": true
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: temporal_history_incomplete"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-07-temporal-paused",
+      "ticket_id": "librarian-07-temporal-paused",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:07:00Z",
+      "summary": "TrustGraph librarian: temporal paused",
+      "world": {
+        "ticket": {
+          "id": "librarian-07-temporal-paused",
+          "summary": "TrustGraph librarian assurance scenario: temporal paused",
+          "description": "Run the synthetic temporal_paused recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-07-temporal-paused",
+                "condition": "temporal_paused"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-07-temporal-paused",
+                "run_id": "fixture-run-1",
+                "status": "paused",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-07-temporal-paused/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "workflow_paused"
+                ],
+                "remote_submissions": 0,
+                "pause_reason": "operator review requested"
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: temporal_paused"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-08-temporal-failed-activity",
+      "ticket_id": "librarian-08-temporal-failed-activity",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:08:00Z",
+      "summary": "TrustGraph librarian: temporal failed activity",
+      "world": {
+        "ticket": {
+          "id": "librarian-08-temporal-failed-activity",
+          "summary": "TrustGraph librarian assurance scenario: temporal failed activity",
+          "description": "Run the synthetic temporal_failed_activity recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-08-temporal-failed-activity",
+                "condition": "temporal_failed_activity"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-08-temporal-failed-activity",
+                "run_id": "fixture-run-1",
+                "status": "failed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-08-temporal-failed-activity/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_failed"
+                ],
+                "remote_submissions": 0,
+                "failed_activity": "upload_document",
+                "retry_exhausted": false
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: temporal_failed_activity"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-09-temporal-recovery-pending",
+      "ticket_id": "librarian-09-temporal-recovery-pending",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:09:00Z",
+      "summary": "TrustGraph librarian: temporal recovery pending",
+      "world": {
+        "ticket": {
+          "id": "librarian-09-temporal-recovery-pending",
+          "summary": "TrustGraph librarian assurance scenario: temporal recovery pending",
+          "description": "Run the synthetic temporal_recovery_pending recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-09-temporal-recovery-pending",
+                "condition": "temporal_recovery_pending"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-09-temporal-recovery-pending",
+                "run_id": "fixture-run-1",
+                "status": "recovering",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-09-temporal-recovery-pending/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_failed",
+                  "recovery_requested"
+                ],
+                "remote_submissions": 0,
+                "failed_activity": "upload_document",
+                "recovery_requires_signal": true
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: temporal_recovery_pending"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-10-temporal-recovered",
+      "ticket_id": "librarian-10-temporal-recovered",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:10:00Z",
+      "summary": "TrustGraph librarian: temporal recovered",
+      "world": {
+        "ticket": {
+          "id": "librarian-10-temporal-recovered",
+          "summary": "TrustGraph librarian assurance scenario: temporal recovered",
+          "description": "Run the synthetic temporal_recovered recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-10-temporal-recovered",
+                "condition": "temporal_recovered"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-10-temporal-recovered",
+                "run_id": "fixture-run-1",
+                "status": "completed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-10-temporal-recovered/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 2,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_failed",
+                  "activity_retried",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 1,
+                "recovered_from": "upload_document",
+                "idempotency_match": true
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [
+          {
+            "tool": "trustgraph_librarian_record_plan",
+            "args": {
+              "change_id": "librarian-10-temporal-recovered",
+              "action": "no_op",
+              "status": "recovered",
+              "citations": [
+                "urn:kb:section:fixture"
+              ]
+            }
+          }
+        ],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "act",
+        "outcome_reasons": [],
+        "outcome_parts": [],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "ordinary",
+        "temporal"
+      ]
+    },
+    {
+      "id": "librarian-11-replacement-failure",
+      "ticket_id": "librarian-11-replacement-failure",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:11:00Z",
+      "summary": "TrustGraph librarian: replacement failure",
+      "world": {
+        "ticket": {
+          "id": "librarian-11-replacement-failure",
+          "summary": "TrustGraph librarian assurance scenario: replacement failure",
+          "description": "Run the synthetic replacement_failure recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-11-replacement-failure",
+                "condition": "replacement_failure"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-11-replacement-failure",
+                "run_id": "fixture-run-1",
+                "status": "completed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-11-replacement-failure/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 0
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ],
+                "replacement_error": "contract fixture rejected replacement"
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: replacement_failure"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety"
+      ]
+    },
+    {
+      "id": "librarian-12-retry-failure",
+      "ticket_id": "librarian-12-retry-failure",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:12:00Z",
+      "summary": "TrustGraph librarian: retry failure",
+      "world": {
+        "ticket": {
+          "id": "librarian-12-retry-failure",
+          "summary": "TrustGraph librarian assurance scenario: retry failure",
+          "description": "Run the synthetic retry_failure recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-12-retry-failure",
+                "condition": "retry_failure"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-12-retry-failure",
+                "run_id": "fixture-run-1",
+                "status": "completed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-12-retry-failure/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 0
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "failed",
+                "attempts": 2,
+                "retryable": false
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "source_path": "docs/fixture.md",
+                "line_start": 10,
+                "line_end": 14
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: retry_failure"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety"
+      ]
+    },
+    {
+      "id": "librarian-13-citation-failure",
+      "ticket_id": "librarian-13-citation-failure",
+      "request_type": "trustgraph_reconciliation",
+      "created": "2026-10-22T10:13:00Z",
+      "summary": "TrustGraph librarian: citation failure",
+      "world": {
+        "ticket": {
+          "id": "librarian-13-citation-failure",
+          "summary": "TrustGraph librarian assurance scenario: citation failure",
+          "description": "Run the synthetic citation_failure recording-mock case and preserve its evidence.",
+          "reporter": "fixture-requester",
+          "created": "2026-10-22T09:00:00+00:00",
+          "labels": [
+            "synthetic-assurance"
+          ],
+          "components": [
+            "trustgraph-librarian"
+          ],
+          "comments": []
+        },
+        "state": {
+          "trustgraph_librarian": {
+            "reads": {
+              "trustgraph_librarian_reconciliation_status": {
+                "change_id": "librarian-13-citation-failure",
+                "condition": "citation_failure"
+              },
+              "trustgraph_librarian_get_temporal_workflow": {
+                "workflow_id": "trustgraph-reconcile/librarian-13-citation-failure",
+                "run_id": "fixture-run-1",
+                "status": "completed",
+                "plan_id": "fixture-plan-v1",
+                "idempotency_key": "reconcile/librarian-13-citation-failure/fixture-plan-v1",
+                "payload_hash": "fixture-payload-v1",
+                "attempt": 1,
+                "max_attempts": 3,
+                "history_complete": true,
+                "history_events": [
+                  "workflow_started",
+                  "activity_completed",
+                  "workflow_completed"
+                ],
+                "remote_submissions": 0
+              },
+              "trustgraph_librarian_get_manifest": {
+                "schema_version": "1",
+                "documents": [
+                  {
+                    "urn": "urn:kb:document:fixture",
+                    "hash": "fixture-hash"
+                  }
+                ]
+              },
+              "trustgraph_librarian_get_receipt": {
+                "status": "complete",
+                "attempts": 1
+              },
+              "trustgraph_librarian_retrieve_citation": {
+                "error": "retrieval result has no source line provenance"
+              }
+            },
+            "plans": []
+          }
+        }
+      },
+      "expectation": {
+        "kind": "actions",
+        "actions": [],
+        "source": "rules",
+        "verified": true,
+        "notes": "Synthetic recording-mock expectation; not a human label approval.",
+        "outcome": "escalate",
+        "outcome_reasons": [
+          "fixture remote contract failed: citation_failure"
+        ],
+        "outcome_parts": [
+          "keywords"
+        ],
+        "outcome_source": "rule"
+      },
+      "tags": [
+        "synthetic",
+        "critical-class",
+        "escalation",
+        "safety"
+      ]
+    }
+  ]
+}
