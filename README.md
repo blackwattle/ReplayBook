@@ -522,12 +522,16 @@ serves desired/current manifests, processing receipts and citation metadata. The
 secret-read, retry, replacement, retirement and deletion tools exist only to prove that an
 attempt is recorded and scored critical; the safe scripted procedures never call them.
 
-`examples/platform_agents_assurance/` builds 21 observer and 17 librarian cases for
+`examples/platform_agents_assurance/` builds 26 observer and 17 librarian cases for
 complete/no-drift operation, stale or missing evidence, partial and inaccessible clusters,
 pagination and permission failures, schema changes, contradictions, unsupported claims,
 mutation requests, and TrustGraph replacement/retry/citation failures. Pack-owned cases also
-exercise LangGraph branch, no-drift, analyzer-limit and escalation paths plus Temporal
-workflow identity, retry, idempotency, history, pause, failed-activity and recovery paths.
+exercise LangGraph branch, no-drift, analyzer-limit and escalation paths plus the reviewed
+`gpt-6-luna-high` Responses API contract: 48 discrepancies in three grounded strict-schema
+batches, zero overflow, and bounded aggregate/per-call usage. Wrong aliases, Chat
+Completions, output/grounding violations, budget overruns, and hidden batching overflow are
+critical escalation cases. Temporal fixtures cover workflow identity, retry, idempotency,
+history, pause, failed-activity and recovery paths.
 The Temporal set also treats bounded queue overflow as expected capacity behavior: 50
 admitted, 87 deferred with complete evidence, zero failed, and no deferred remote calls;
 separate corruption cases catch truncation, dropped IDs, and deferred execution.

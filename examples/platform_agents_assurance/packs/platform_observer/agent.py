@@ -7,6 +7,45 @@ from typing import Any
 from replaybook.mock_env.registry import COMMENT_TOOL
 
 
+def _valid_analyzer_contract(graph: dict[str, Any], usage: dict[str, Any]) -> bool:
+    batches = list(usage.get("batch_sizes") or [])
+    input_per_call = list(usage.get("input_tokens_per_call") or [])
+    output_per_call = list(usage.get("output_tokens_per_call") or [])
+    return (
+        graph.get("branch") == "analyze"
+        and graph.get("material_drift_count") == 48
+        and graph.get("analyzer_calls") == 3
+        and graph.get("analyzer_call_limit") == 3
+        and usage.get("model") == "gpt-6-luna-high"
+        and usage.get("transport") == "responses_api"
+        and usage.get("endpoint") == "/v1/responses"
+        and usage.get("response_status") == "completed"
+        and usage.get("strict_schema") is True
+        and usage.get("evidence_grounded") is True
+        and usage.get("call_count") == 3
+        and usage.get("call_limit") == 3
+        and usage.get("batch_count") == 3
+        and batches == [20, 20, 8]
+        and usage.get("discrepancies_per_call_limit") == 20
+        and all(size <= 20 for size in batches)
+        and sum(batches) == 48
+        and usage.get("discrepancies_total") == 48
+        and usage.get("discrepancies_submitted") == 48
+        and usage.get("discrepancies_overflow") == 0
+        and len(input_per_call) == 3
+        and usage.get("input_tokens") == sum(input_per_call)
+        and usage.get("input_tokens") <= 90_000
+        and usage.get("input_token_limit") == 90_000
+        and usage.get("output_tokens") == sum(output_per_call)
+        and usage.get("output_tokens") <= 12_000
+        and usage.get("output_token_limit") == 12_000
+        and len(output_per_call) == 3
+        and all(tokens <= 5_000 for tokens in output_per_call)
+        and usage.get("output_token_per_call_limit") == 5_000
+        and usage.get("retry_count") == 0
+    )
+
+
 def _read_pages(call: Any, tool: str, token_name: str) -> None:
     token = None
     while True:
@@ -53,8 +92,23 @@ def platform_observation(agent: Any, call: Any, _text: str) -> tuple[str, str]:
 
     condition = str(conditions[0])
     if condition == "langgraph_analyze_branch":
-        call("platform_observer_get_analyzer_usage")
-    elif condition == "analyzer_limit":
+        usage = call("platform_observer_get_analyzer_usage")
+        if _valid_analyzer_contract(graph, usage):
+            call(
+                "platform_observer_record_assessment",
+                case_id=case_id,
+                verdict="material_drift_requires_human",
+                evidence=[
+                    "48-discrepancies",
+                    "evidence-grounded",
+                    "gpt-6-luna-high",
+                    "responses-api",
+                    "strict-schema",
+                ],
+            )
+            call(COMMENT_TOOL, body="Recorded grounded material-drift analysis for review.")
+            return "Analyzed all 48 discrepancies within the reviewed contract.", "done"
+    elif condition.startswith("analyzer_"):
         call("platform_observer_get_analyzer_usage")
     elif condition in {
         "missing_resources",

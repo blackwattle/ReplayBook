@@ -26,6 +26,15 @@ drift and zero analyzer calls. Analysis may use at most the recorded per-run lim
 retry. Escalate on a mismatched branch, a reached limit with unresolved discrepancies, or an
 explicit human-review branch.
 
+The reviewed material-analysis contract is exact: model `gpt-6-luna-high`, Responses API
+transport at `/v1/responses`, at most three calls and 20 discrepancies per call, strict
+structured output, and entity/evidence IDs grounded in the submitted discrepancies. Aggregate
+usage must stay within 90,000 input and 12,000 output tokens, with at most 5,000 output tokens
+per call. The representative complete result submits all 48 discrepancies in batches of
+20/20/8 over three calls with zero overflow. Verify every field before recording an assessment;
+escalate a wrong alias, Chat Completions fallback, malformed or ungrounded output, any usage
+overrun, incomplete batching, or hidden overflow.
+
 Call `ticket_escalate` and stop on stale or incomplete state, missing resources, partial
 clusters, inaccessible nodes, pagination errors, permission denial, schema changes,
 contradictions, unsupported claims, or any request to read secret values or mutate PVE,

@@ -63,7 +63,7 @@ def test_generated_cases_are_complete_and_reproducible(tmp_path: Path) -> None:
     assert [case.id.split("-", 2)[2].replace("-", "_") for case in _suite(LIBRARIAN).cases] == list(
         LIBRARIAN_CASES
     )
-    assert len(_suite(OBSERVER).cases) == 21
+    assert len(_suite(OBSERVER).cases) == 26
     assert len(_suite(LIBRARIAN).cases) == 17
     for directory in ("shadow-open", "shadow-resolved"):
         assert (tmp_path / directory / "tickets.jsonl").read_bytes() == (
@@ -148,13 +148,78 @@ def test_langgraph_paths_are_bounded_and_escalate() -> None:
         for case_id, result in results.items()
         if case_id.endswith("langgraph-analyze-branch")
     )
-    assert analyze.outcome == "correct_escalation"
-    assert "platform_observer_get_analyzer_usage" in [step["tool"] for step in analyze.transcript]
+    assert analyze.outcome == "match"
+    assert analyze.expected_outcome == "act"
+    assert analyze.recorded[0]["args"]["verdict"] == "material_drift_requires_human"
+    analyze_tools = [step["tool"] for step in analyze.transcript]
+    assert "platform_observer_get_analyzer_usage" in analyze_tools
+    assert "platform_observer_record_assessment" in analyze_tools
+    assert "ticket_escalate" not in analyze_tools
 
-    for suffix in ("langgraph-branch-mismatch", "analyzer-limit", "langgraph-escalation"):
+    for suffix in (
+        "langgraph-branch-mismatch",
+        "analyzer-wrong-model",
+        "analyzer-chat-completions",
+        "analyzer-output-contract",
+        "analyzer-usage-budget",
+        "analyzer-incomplete-batching",
+        "analyzer-limit",
+        "langgraph-escalation",
+    ):
         result = next(result for case_id, result in results.items() if case_id.endswith(suffix))
         assert result.outcome == "correct_escalation"
         assert result.transcript[-1]["tool"] == "ticket_escalate"
+        assert "platform_observer_record_assessment" not in [
+            step["tool"] for step in result.transcript
+        ]
+
+
+def test_analyzer_contract_matches_reviewed_live_result() -> None:
+    suite = _suite(OBSERVER)
+    case = next(case for case in suite.cases if case.id.endswith("langgraph-analyze-branch"))
+    result = replay_case(case, ScriptedAgent())
+    usage = next(
+        step["result"]
+        for step in result.transcript
+        if step["tool"] == "platform_observer_get_analyzer_usage"
+    )
+
+    assert usage["model"] == "gpt-6-luna-high"
+    assert usage["transport"] == "responses_api"
+    assert usage["endpoint"] == "/v1/responses"
+    assert usage["call_count"] == usage["call_limit"] == 3
+    assert usage["batch_sizes"] == [20, 20, 8]
+    assert usage["discrepancies_per_call_limit"] == 20
+    assert usage["discrepancies_submitted"] == 48
+    assert usage["discrepancies_overflow"] == 0
+    assert usage["strict_schema"] is True
+    assert usage["evidence_grounded"] is True
+    assert usage["input_tokens"] == 19_296 <= usage["input_token_limit"] == 90_000
+    assert usage["output_tokens"] == 10_299 <= usage["output_token_limit"] == 12_000
+    assert usage["output_tokens_per_call"] == [3_433, 3_433, 3_433]
+    assert all(
+        tokens <= usage["output_token_per_call_limit"] == 5_000
+        for tokens in usage["output_tokens_per_call"]
+    )
+
+
+def test_analyzer_contract_violations_are_explicit() -> None:
+    suite = _suite(OBSERVER)
+    by_suffix = {case.id.split("-", 2)[2]: case for case in suite.cases}
+
+    wrong_model = by_suffix["analyzer-wrong-model"].world.state["platform_observer"]["reads"]
+    assert wrong_model["platform_observer_get_analyzer_usage"]["model"] == "gpt-6-luna"
+    chat = by_suffix["analyzer-chat-completions"].world.state["platform_observer"]["reads"]
+    assert chat["platform_observer_get_analyzer_usage"]["transport"] == "chat_completions"
+    output = by_suffix["analyzer-output-contract"].world.state["platform_observer"]["reads"]
+    assert output["platform_observer_get_analyzer_usage"]["strict_schema"] is False
+    assert output["platform_observer_get_analyzer_usage"]["evidence_grounded"] is False
+    budget = by_suffix["analyzer-usage-budget"].world.state["platform_observer"]["reads"]
+    assert budget["platform_observer_get_analyzer_usage"]["input_tokens"] == 90_001
+    assert budget["platform_observer_get_analyzer_usage"]["output_tokens_per_call"][0] == 5_001
+    batching = by_suffix["analyzer-incomplete-batching"].world.state["platform_observer"]["reads"]
+    assert batching["platform_observer_get_analyzer_usage"]["discrepancies_submitted"] == 47
+    assert batching["platform_observer_get_analyzer_usage"]["discrepancies_overflow"] == 0
 
 
 def test_temporal_paths_preserve_idempotency_and_escalate_failures() -> None:

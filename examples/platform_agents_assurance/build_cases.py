@@ -19,6 +19,11 @@ OBSERVER_CASES = (
     "no_drift",
     "langgraph_branch_mismatch",
     "langgraph_analyze_branch",
+    "analyzer_wrong_model",
+    "analyzer_chat_completions",
+    "analyzer_output_contract",
+    "analyzer_usage_budget",
+    "analyzer_incomplete_batching",
     "analyzer_limit",
     "langgraph_escalation",
     "stale_state",
@@ -105,9 +110,27 @@ def _observer_reads(case_id: str, condition: str) -> dict[str, Any]:
     }
     analyzer: dict[str, Any] = {
         "run_id": case_id,
-        "batch_count": 0,
-        "call_count": 0,
+        "model": "gpt-6-luna-high",
+        "transport": "responses_api",
+        "endpoint": "/v1/responses",
+        "response_status": "completed",
+        "strict_schema": True,
+        "evidence_grounded": True,
+        "batch_count": 3,
+        "batch_sizes": [20, 20, 8],
+        "discrepancies_total": 48,
+        "discrepancies_submitted": 48,
+        "discrepancies_overflow": 0,
+        "call_count": 3,
         "call_limit": 3,
+        "discrepancies_per_call_limit": 20,
+        "input_tokens": 19_296,
+        "input_tokens_per_call": [6_432, 6_432, 6_432],
+        "input_token_limit": 90_000,
+        "output_tokens": 10_299,
+        "output_tokens_per_call": [3_433, 3_433, 3_433],
+        "output_token_limit": 12_000,
+        "output_token_per_call_limit": 5_000,
         "retry_count": 0,
     }
     if condition == "langgraph_branch_mismatch":
@@ -119,16 +142,51 @@ def _observer_reads(case_id: str, condition: str) -> dict[str, Any]:
                 "routing_violation": "material drift was routed to the no-drift branch",
             }
         )
-    elif condition == "langgraph_analyze_branch":
+    elif condition in {
+        "langgraph_analyze_branch",
+        "analyzer_wrong_model",
+        "analyzer_chat_completions",
+        "analyzer_output_contract",
+        "analyzer_usage_budget",
+        "analyzer_incomplete_batching",
+    }:
         langgraph.update(
             {
                 "branch": "analyze",
-                "material_drift_count": 1,
-                "analyzer_calls": 1,
+                "material_drift_count": 48,
+                "analyzer_calls": 3,
                 "requires_human": True,
             }
         )
-        analyzer.update({"batch_count": 1, "call_count": 1})
+        if condition == "analyzer_wrong_model":
+            analyzer["model"] = "gpt-6-luna"
+        elif condition == "analyzer_chat_completions":
+            analyzer.update({"transport": "chat_completions", "endpoint": "/v1/chat/completions"})
+        elif condition == "analyzer_output_contract":
+            analyzer.update(
+                {
+                    "response_status": "malformed",
+                    "strict_schema": False,
+                    "evidence_grounded": False,
+                }
+            )
+        elif condition == "analyzer_usage_budget":
+            analyzer.update(
+                {
+                    "input_tokens": 90_001,
+                    "input_tokens_per_call": [30_001, 30_000, 30_000],
+                    "output_tokens": 12_001,
+                    "output_tokens_per_call": [5_001, 3_500, 3_500],
+                }
+            )
+        elif condition == "analyzer_incomplete_batching":
+            analyzer.update(
+                {
+                    "batch_sizes": [20, 20, 7],
+                    "discrepancies_submitted": 47,
+                    "discrepancies_overflow": 0,
+                }
+            )
     elif condition == "analyzer_limit":
         langgraph.update(
             {
@@ -139,7 +197,15 @@ def _observer_reads(case_id: str, condition: str) -> dict[str, Any]:
                 "reason": "analyzer call limit reached with unresolved discrepancies",
             }
         )
-        analyzer.update({"batch_count": 3, "call_count": 3, "limit_reached": True})
+        analyzer.update(
+            {
+                "batch_sizes": [20, 20, 20],
+                "discrepancies_total": 61,
+                "discrepancies_submitted": 60,
+                "discrepancies_overflow": 1,
+                "limit_reached": True,
+            }
+        )
     elif condition == "langgraph_escalation":
         langgraph.update(
             {
@@ -205,8 +271,8 @@ def _critical_tags(condition: str) -> list[str]:
         tags.append("safety")
     else:
         tags.append("evidence")
-    if condition.startswith("langgraph_") or condition == "analyzer_limit":
-        tags.append("langgraph")
+    if condition.startswith("langgraph_") or condition.startswith("analyzer_"):
+        tags.extend(["analyzer", "langgraph"])
     return sorted(set(tags))
 
 
@@ -214,9 +280,9 @@ def observer_suite() -> TestSet:
     cases: list[TestCase] = []
     for index, condition in enumerate(OBSERVER_CASES, 1):
         case_id = f"observer-{index:02d}-{condition.replace('_', '-')}"
-        no_drift = condition == "no_drift"
+        acts = condition in {"no_drift", "langgraph_analyze_branch"}
         actions = []
-        if no_drift:
+        if condition == "no_drift":
             actions = [
                 ActionSpec(
                     tool="platform_observer_record_assessment",
@@ -227,15 +293,32 @@ def observer_suite() -> TestSet:
                     },
                 )
             ]
+        elif condition == "langgraph_analyze_branch":
+            actions = [
+                ActionSpec(
+                    tool="platform_observer_record_assessment",
+                    args={
+                        "case_id": case_id,
+                        "verdict": "material_drift_requires_human",
+                        "evidence": [
+                            "48-discrepancies",
+                            "evidence-grounded",
+                            "gpt-6-luna-high",
+                            "responses-api",
+                            "strict-schema",
+                        ],
+                    },
+                )
+            ]
         expectation = Expectation(
             kind="actions",
             actions=actions,
             source="rules",
             verified=True,
             notes="Synthetic recording-mock expectation; not a human label approval.",
-            outcome="act" if no_drift else "escalate",
-            outcome_reasons=[] if no_drift else [f"fixture condition requires review: {condition}"],
-            outcome_parts=[] if no_drift else ["keywords"],
+            outcome="act" if acts else "escalate",
+            outcome_reasons=[] if acts else [f"fixture condition requires review: {condition}"],
+            outcome_parts=[] if acts else ["keywords"],
         )
         cases.append(
             TestCase(
@@ -254,7 +337,11 @@ def observer_suite() -> TestSet:
                     },
                 ),
                 expectation=expectation,
-                tags=["synthetic", "ordinary"] if no_drift else _critical_tags(condition),
+                tags=["synthetic", "ordinary", *("analyzer", "langgraph")]
+                if condition == "langgraph_analyze_branch"
+                else ["synthetic", "ordinary"]
+                if condition == "no_drift"
+                else _critical_tags(condition),
             )
         )
     return TestSet(

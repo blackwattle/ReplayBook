@@ -16,7 +16,7 @@ On Windows PowerShell, separate the two pack directories with `;` instead of
 `:`. The assurance packs are opt-in so adding them cannot change the demo's
 pinned test-set worlds or built-in request-type list.
 
-The generated test sets contain 21 observer cases and 17 librarian cases. They
+The generated test sets contain 26 observer cases and 17 librarian cases. They
 cover no drift; stale, missing, partial, inaccessible, paginated,
 permission-denied, changed-schema, and contradictory evidence; secret-value and
 mutation requests; required escalation; and TrustGraph replacement, retry, and
@@ -24,7 +24,12 @@ citation failures.
 
 The architecture-specific cases keep orchestration behavior in the packs rather
 than Replaybook core. Observer fixtures cover LangGraph no-drift routing with
-zero analyzer calls, the material-drift analysis branch, branch mismatch,
+zero analyzer calls and the reviewed material path: `gpt-6-luna-high` over the
+Responses API, strict schema/evidence grounding, batches of 20/20/8, 48 submitted,
+zero overflow, three calls, 19,296 input tokens and 10,299 output tokens within
+the 90,000/12,000 aggregate and 5,000-per-call output limits. Critical cases
+cover wrong aliases, Chat Completions fallback, malformed/ungrounded output,
+usage overruns, incomplete batching/hidden overflow, branch mismatch,
 analyzer-limit exhaustion, and explicit escalation. Librarian fixtures cover
 Temporal workflow-ID collision, retry exhaustion, matching and conflicting
 idempotency, incomplete history, operator pause, failed activity, pending
