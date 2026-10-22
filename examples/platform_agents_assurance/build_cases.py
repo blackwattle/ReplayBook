@@ -524,8 +524,10 @@ def _write_shadow_fixture(out: Path) -> None:
     for name, ticket in (("shadow-open", open_ticket), ("shadow-resolved", resolved)):
         directory = out / name
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "tickets.jsonl").write_text(ticket.model_dump_json() + "\n", encoding="utf-8")
-        (directory / "platform.yaml").write_text("{}\n", encoding="utf-8")
+        (directory / "tickets.jsonl").write_text(
+            ticket.model_dump_json() + "\n", encoding="utf-8", newline="\n"
+        )
+        (directory / "platform.yaml").write_text("{}\n", encoding="utf-8", newline="\n")
 
 
 def build(out: Path) -> None:
@@ -533,7 +535,7 @@ def build(out: Path) -> None:
     suites = (observer_suite(), librarian_suite())
     for suite in suites:
         (out / f"{suite.name}.json").write_text(
-            suite.model_dump_json(indent=2) + "\n", encoding="utf-8"
+            suite.model_dump_json(indent=2) + "\n", encoding="utf-8", newline="\n"
         )
     _write_shadow_fixture(out)
 
