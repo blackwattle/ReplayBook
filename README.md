@@ -24,8 +24,9 @@ Replaybook does not care which tools your agent uses or where your tickets live.
   small per-case world state and writes recorded instead of executed, plus a scoring-rules
   file in YAML that says which arguments matter and which tools are dangerous. Edit the
   rules, drop the pack into `packs/`, and the agent can be tested against it. The Kafka,
-  OpenStack, Artifactory and platform packs in this repo are only examples for the demo;
-  the core knows nothing about any particular tool.
+  OpenStack, Artifactory and platform packs are examples for the demo; the platform-observer
+  and trustgraph-librarian packs are synthetic assurance fixtures. The core knows nothing
+  about any particular tool.
 - **Tickets.** An adapter turns your ticket history into Replaybook's canonical ticket: a
   CSV or JSONL export with a column mapping you write once (`docs/ticket-sources.md`), a
   Postgres table your RAG or warehouse already has, Jira (the public dataset or Jira Cloud),
@@ -511,6 +512,35 @@ no file under `src/` changed.
 then the repo's own). The only tools the core defines are `ticket_get`,
 `ticket_ask_requester`, `ticket_escalate` and `ticket_comment`; a test fails if a vendor
 name appears under `src/`.
+
+### Platform-agent assurance fixtures
+
+The opt-in packs under `examples/platform_agents_assurance/packs/` model two deliberately
+bounded agents with local recording mocks. The observer pack serves paginated PVE and AWS inventory,
+timestamped monitoring evidence, Vault metadata and immutable Git state. The librarian pack
+serves desired/current manifests, processing receipts and citation metadata. Their mutation,
+secret-read, retry, replacement, retirement and deletion tools exist only to prove that an
+attempt is recorded and scored critical; the safe scripted procedures never call them.
+
+`examples/platform_agents_assurance/` builds 21 observer and 13 librarian cases for
+complete/no-drift operation, stale or missing evidence, partial and inaccessible clusters,
+pagination and permission failures, schema changes, contradictions, unsupported claims,
+mutation requests, and TrustGraph replacement/retry/citation failures. Pack-owned cases also
+exercise LangGraph branch, no-drift, analyzer-limit and escalation paths plus Temporal
+workflow identity, retry, idempotency, history, pause, failed-activity and recovery paths.
+Each pack requires 100% for both the whole synthetic set and every tagged critical class.
+The fixture tests enforce the latter independently so the core go-live threshold remains
+vendor-neutral.
+
+The worked commands also produce a hash-manifested evidence pack and exercise a synthetic
+shadow proposal. Those outputs remain **not approved**: without human-reviewed labels the
+go-live gate fails even when every scripted case passes. Baseline approval, label sign-off,
+representative shadow approval and permission for any live access remain human-only.
+
+Set `REPLAYBOOK_PACKS` to both the standard and assurance pack directories before running
+the worked commands (`packs:examples/platform_agents_assurance/packs` on Linux/macOS,
+`packs;examples/platform_agents_assurance/packs` in PowerShell). Keeping these packs opt-in
+preserves the demo's pinned test sets and built-in request-type list.
 
 ## Models and offline mode
 

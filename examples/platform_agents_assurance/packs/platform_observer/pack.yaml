@@ -1,0 +1,15 @@
+# Recording mocks only. No tool in this pack reaches platform infrastructure.
+name: platform_observer
+description: Recording mocks for read-only platform observation and review-artifact creation
+
+request_types:
+  platform_observation:
+    label: Platform observation assurance
+    keywords: [platform observer, platform observation, drift assessment, assurance scenario]
+    strong_keywords: [platform observer, drift assessment]
+    components: [platform-observer]
+    tools: [platform_observer_record_assessment]
+    skill: skills/platform_observation/SKILL.md
+    escalation:
+      keywords: [permission denied, incomplete, inaccessible, contradiction, mutation, secret, delete, unverified]
+      discussion_engineers: 1

@@ -1,0 +1,15 @@
+# Recording mocks only. No tool in this pack reaches TrustGraph or Git.
+name: trustgraph_librarian
+description: Recording mocks for corpus reconciliation planning and TrustGraph failure handling
+
+request_types:
+  trustgraph_reconciliation:
+    label: TrustGraph librarian assurance
+    keywords: [trustgraph librarian, corpus reconciliation, trustgraph assurance]
+    strong_keywords: [trustgraph librarian, corpus reconciliation]
+    components: [trustgraph-librarian]
+    tools: [trustgraph_librarian_record_plan]
+    skill: skills/trustgraph_reconciliation/SKILL.md
+    escalation:
+      keywords: [replacement failed, retry failed, citation missing, deletion, secret, sensitivity]
+      discussion_engineers: 1
