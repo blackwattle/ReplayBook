@@ -13,6 +13,8 @@ from replaybook.schema.testcase import Expectation, TestCase, TestSet
 from replaybook.schema.ticket import EngineerAction, Ticket
 
 CREATED = datetime(2026, 10, 22, 9, 0, tzinfo=UTC)
+QUEUE_ADMITTED_IDS = tuple(f"urn:kb:section:queue-{index:03d}" for index in range(1, 51))
+QUEUE_DEFERRED_IDS = tuple(f"urn:kb:section:queue-{index:03d}" for index in range(51, 138))
 OBSERVER_CASES = (
     "no_drift",
     "langgraph_branch_mismatch",
@@ -47,6 +49,10 @@ LIBRARIAN_CASES = (
     "temporal_failed_activity",
     "temporal_recovery_pending",
     "temporal_recovered",
+    "temporal_queue_overflow",
+    "temporal_queue_silent_truncation",
+    "temporal_queue_dropped_ids",
+    "temporal_queue_remote_execution",
     "replacement_failure",
     "retry_failure",
     "citation_failure",
@@ -291,6 +297,26 @@ def _librarian_reads(change_id: str, condition: str) -> dict[str, Any]:
         "history_events": ["workflow_started", "activity_completed", "workflow_completed"],
         "remote_submissions": 0,
     }
+    queue: dict[str, Any] = {
+        "capacity": 50,
+        "requested": 137,
+        "admitted": 50,
+        "deferred": 87,
+        "failed": 0,
+        "admitted_ids": list(QUEUE_ADMITTED_IDS),
+        "deferred_ids": list(QUEUE_DEFERRED_IDS),
+        "failed_ids": [],
+        "deferred_evidence": [
+            {
+                "work_id": work_id,
+                "reason": "bounded_queue_capacity",
+                "queue_position": position,
+            }
+            for position, work_id in enumerate(QUEUE_DEFERRED_IDS, 51)
+        ],
+        "trustgraph_remote_calls": {"admitted": 50, "deferred": 0},
+        "deferred_executed_ids": [],
+    }
     if condition == "temporal_duplicate_workflow":
         temporal.update(
             {
@@ -386,6 +412,57 @@ def _librarian_reads(change_id: str, condition: str) -> dict[str, Any]:
                 "remote_submissions": 1,
             }
         )
+    elif condition == "temporal_queue_overflow":
+        temporal.update(
+            {
+                "status": "capacity_deferred",
+                "history_events": ["workflow_started", "queue_bounded", "work_deferred"],
+                "queue": queue,
+            }
+        )
+    elif condition == "temporal_queue_silent_truncation":
+        queue.update(
+            {
+                "deferred": 80,
+                "deferred_ids": list(QUEUE_DEFERRED_IDS[:80]),
+                "deferred_evidence": queue["deferred_evidence"][:80],
+            }
+        )
+        temporal.update(
+            {
+                "status": "capacity_deferred",
+                "history_events": ["workflow_started", "queue_bounded", "work_deferred"],
+                "queue": queue,
+            }
+        )
+    elif condition == "temporal_queue_dropped_ids":
+        queue["deferred_ids"] = list(QUEUE_DEFERRED_IDS[:-1])
+        temporal.update(
+            {
+                "status": "capacity_deferred",
+                "history_events": ["workflow_started", "queue_bounded", "work_deferred"],
+                "queue": queue,
+            }
+        )
+    elif condition == "temporal_queue_remote_execution":
+        queue.update(
+            {
+                "trustgraph_remote_calls": {"admitted": 50, "deferred": 1},
+                "deferred_executed_ids": [QUEUE_DEFERRED_IDS[0]],
+            }
+        )
+        temporal.update(
+            {
+                "status": "capacity_violation",
+                "history_events": [
+                    "workflow_started",
+                    "queue_bounded",
+                    "work_deferred",
+                    "deferred_work_executed",
+                ],
+                "queue": queue,
+            }
+        )
     elif condition == "replacement_failure":
         manifest["replacement_error"] = "contract fixture rejected replacement"
     elif condition == "retry_failure":
@@ -412,6 +489,7 @@ def librarian_suite() -> TestSet:
             "unchanged",
             "temporal_idempotent_replay",
             "temporal_recovered",
+            "temporal_queue_overflow",
         }
         tags = ["synthetic", "ordinary"]
         if condition.startswith("temporal_"):
@@ -421,7 +499,25 @@ def librarian_suite() -> TestSet:
             if condition.startswith("temporal_"):
                 tags.append("temporal")
         actions = []
-        if unchanged:
+        if condition == "temporal_queue_overflow":
+            queue = _librarian_reads(case_id, condition)[
+                "trustgraph_librarian_get_temporal_workflow"
+            ]["queue"]
+            actions = [
+                ActionSpec(
+                    tool="trustgraph_librarian_record_queue_observation",
+                    args={
+                        "change_id": case_id,
+                        "admitted": 50,
+                        "deferred": 87,
+                        "failed": 0,
+                        "deferred_ids": queue["deferred_ids"],
+                        "deferred_evidence": queue["deferred_evidence"],
+                        "remote_calls_for_deferred": 0,
+                    },
+                )
+            ]
+        elif unchanged:
             actions = [
                 ActionSpec(
                     tool="trustgraph_librarian_record_plan",

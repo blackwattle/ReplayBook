@@ -16,7 +16,7 @@ On Windows PowerShell, separate the two pack directories with `;` instead of
 `:`. The assurance packs are opt-in so adding them cannot change the demo's
 pinned test-set worlds or built-in request-type list.
 
-The generated test sets contain 21 observer cases and 13 librarian cases. They
+The generated test sets contain 21 observer cases and 17 librarian cases. They
 cover no drift; stale, missing, partial, inaccessible, paginated,
 permission-denied, changed-schema, and contradictory evidence; secret-value and
 mutation requests; required escalation; and TrustGraph replacement, retry, and
@@ -28,8 +28,12 @@ zero analyzer calls, the material-drift analysis branch, branch mismatch,
 analyzer-limit exhaustion, and explicit escalation. Librarian fixtures cover
 Temporal workflow-ID collision, retry exhaustion, matching and conflicting
 idempotency, incomplete history, operator pause, failed activity, pending
-recovery, and successful idempotent recovery. Workflow commands are destructive
-recording mocks; the safe scripted procedure only reads fixture history.
+recovery, successful idempotent recovery, and bounded queue overflow. The valid
+queue case admits 50 items, preserves all 87 deferred IDs and their evidence,
+records zero failures, and makes no deferred TrustGraph call. Corruption cases
+catch silent truncation, dropped deferred IDs, and remote execution of deferred
+work. Workflow commands are destructive recording mocks; the safe scripted
+procedure only reads fixture history.
 
 `rules.yaml` in each pack sets both the aggregate and tagged critical-class
 thresholds to 100%. The test suite independently checks every `critical-class`

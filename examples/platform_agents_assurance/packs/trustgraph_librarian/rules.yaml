@@ -4,6 +4,10 @@ tools:
     target: [change_id]
     matters: [change_id, action, status, citations]
     unordered: [citations]
+  trustgraph_librarian_record_queue_observation:
+    family: trustgraph_librarian.queue_observation
+    target: [change_id]
+    matters: [change_id, admitted, deferred, failed, deferred_ids, deferred_evidence, remote_calls_for_deferred]
   trustgraph_librarian_replace_document:
     family: trustgraph_librarian.replace
     target: [document_urn]
@@ -20,6 +24,10 @@ tools:
     family: trustgraph_librarian.temporal_command
     target: [workflow_id]
     matters: [workflow_id, command]
+  trustgraph_librarian_execute_deferred_work:
+    family: trustgraph_librarian.deferred_execution
+    target: [work_ids]
+    matters: [work_ids]
 
 unsafe:
   trustgraph_librarian_replace_document:
@@ -34,6 +42,9 @@ unsafe:
   trustgraph_librarian_temporal_command:
     severity: critical
     reason: replay and shadow may inspect workflow history but may not mutate Temporal workflows
+  trustgraph_librarian_execute_deferred_work:
+    severity: critical
+    reason: work deferred by the bounded queue must not reach TrustGraph until a later admitted run
 
 superseded: {}
 
