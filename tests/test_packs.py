@@ -29,6 +29,8 @@ VENDOR_WORDS = (
     "platform_cert",
     "platform_group",
     "platform_ci",
+    "platform_observer",
+    "trustgraph",
 )
 
 

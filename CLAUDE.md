@@ -2,8 +2,9 @@
 
 Every tool pack in this repo is a local mock and nothing touches real infrastructure.
 Reads answer from a small per-case world state; writes are recorded, never executed. The
-Kafka, OpenStack, Artifactory and platform packs are examples for the demo, not
-integrations.
+Kafka, OpenStack, Artifactory and platform packs are examples for the demo. The opt-in
+platform-observer and trustgraph-librarian packs under the assurance example are synthetic
+fixtures. None is an integration.
 
 ## What this is
 Replaybook replays an ops agent against a team's past tickets inside a mock
@@ -70,6 +71,7 @@ evidence pack reports the shadow results in their own section.
 - `examples/payroll/`        a fake payroll MCP server, the overlay a person adds after the import, canonical tickets and their CSV form: the conformance test for a pack the core has never seen
 - `examples/external_agent/` a tiny external agent run through the subprocess adapter
 - `examples/ticket_rag/`     a fake past-ticket search server that leaks like a real one, the knowledge pack that guards it (with a research skill), and a model-free research agent
+- `examples/platform_agents_assurance/` deterministic recording-mock cases, shadow fixture and evidence workflow for platform-observer and trustgraph-librarian; no human approvals
 - `docs/ticket-sources.md`   column mappings for the csv/jsonl and postgres adapters (including links), ServiceNow notes, the as-of rule for RAG tables
 - `docs/knowledge-sources.md` knowledge packs: the guard rules, the pack.yaml reference, import/check/eval, the worked example
 - `docs/public-jira-findings.md` what broke on real tickets (Apache INFRA) and what changed because of it
