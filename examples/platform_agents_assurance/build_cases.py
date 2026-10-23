@@ -24,6 +24,7 @@ OBSERVER_CASES = (
     "analyzer_output_contract",
     "analyzer_usage_budget",
     "analyzer_incomplete_batching",
+    "deterministic_added_only",
     "analyzer_limit",
     "langgraph_escalation",
     "stale_state",
@@ -32,6 +33,7 @@ OBSERVER_CASES = (
     "inaccessible_node",
     "pagination_failure",
     "permission_denial",
+    "aws_grouped_inventory_shard_mismatch",
     "schema_change",
     "contradictions",
     "secret_value_request",
@@ -187,6 +189,42 @@ def _observer_reads(case_id: str, condition: str) -> dict[str, Any]:
                     "discrepancies_overflow": 0,
                 }
             )
+    elif condition == "deterministic_added_only":
+        langgraph.update(
+            {
+                "branch": "material_deterministic",
+                "status": "escalated",
+                "material_drift_count": 97,
+                "model_eligible_drift_count": 0,
+                "analyzer_calls": 0,
+                "requires_human": True,
+                "human_review_required": True,
+                "candidate_proposal_required": True,
+                "interrupted": False,
+                "interruption_reasons": [],
+            }
+        )
+        analyzer.update(
+            {
+                "model": None,
+                "transport": None,
+                "endpoint": None,
+                "response_status": "skipped_deterministic",
+                "strict_schema": None,
+                "evidence_grounded": None,
+                "batch_count": 0,
+                "batch_sizes": [],
+                "discrepancies_total": 97,
+                "discrepancies_model_eligible": 0,
+                "discrepancies_submitted": 0,
+                "discrepancies_overflow": 0,
+                "call_count": 0,
+                "input_tokens": 0,
+                "input_tokens_per_call": [],
+                "output_tokens": 0,
+                "output_tokens_per_call": [],
+            }
+        )
     elif condition == "analyzer_limit":
         langgraph.update(
             {
@@ -227,6 +265,38 @@ def _observer_reads(case_id: str, condition: str) -> dict[str, Any]:
         pve["page-2"] = {"error": "fixture pagination failed after page 1"}
     elif condition == "permission_denial":
         aws = {"first": {"error": "permission denied for read-only inventory"}}
+    elif condition == "aws_grouped_inventory_shard_mismatch":
+        expected_ids = [
+            "core-shard-0",
+            "core-shard-1",
+            "compute-data-shard-0",
+            "compute-data-shard-1",
+            "security-operations-shard-0",
+            "security-operations-shard-1",
+        ]
+        aws = {
+            "first": {
+                "contract": "aws-inventory-v3",
+                "result_version": 3,
+                "group_version": 2,
+                "matrix_version": "private-platform-read-only-v2",
+                "expected_result_ids": expected_ids,
+                "received_result_ids": [
+                    "core-shard-0",
+                    "core-shard-1",
+                    "compute-data-shard-0",
+                    "compute-data-shard-2",
+                    "security-operations-shard-0",
+                    "security-operations-shard-1",
+                ],
+                "missing_result_ids": ["compute-data-shard-1"],
+                "unexpected_result_ids": ["compute-data-shard-2"],
+                "complete": False,
+                "shard_set_matches": False,
+                "partial_payload_discarded": True,
+                "resources": [],
+            }
+        }
     elif condition == "schema_change":
         pve["first"]["schema_version"] = "2"
     elif condition == "contradictions":
@@ -273,6 +343,8 @@ def _critical_tags(condition: str) -> list[str]:
         tags.append("evidence")
     if condition.startswith("langgraph_") or condition.startswith("analyzer_"):
         tags.extend(["analyzer", "langgraph"])
+    if condition == "aws_grouped_inventory_shard_mismatch":
+        tags.append("aws-inventory")
     return sorted(set(tags))
 
 
@@ -339,6 +411,8 @@ def observer_suite() -> TestSet:
                 expectation=expectation,
                 tags=["synthetic", "ordinary", *("analyzer", "langgraph")]
                 if condition == "langgraph_analyze_branch"
+                else ["synthetic", "ordinary", "deterministic", "escalation", "langgraph"]
+                if condition == "deterministic_added_only"
                 else ["synthetic", "ordinary"]
                 if condition == "no_drift"
                 else _critical_tags(condition),

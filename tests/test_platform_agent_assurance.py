@@ -63,7 +63,7 @@ def test_generated_cases_are_complete_and_reproducible(tmp_path: Path) -> None:
     assert [case.id.split("-", 2)[2].replace("-", "_") for case in _suite(LIBRARIAN).cases] == list(
         LIBRARIAN_CASES
     )
-    assert len(_suite(OBSERVER).cases) == 26
+    assert len(_suite(OBSERVER).cases) == 28
     assert len(_suite(LIBRARIAN).cases) == 17
     for directory in ("shadow-open", "shadow-resolved"):
         assert (tmp_path / directory / "tickets.jsonl").read_bytes() == (
@@ -220,6 +220,62 @@ def test_analyzer_contract_violations_are_explicit() -> None:
     batching = by_suffix["analyzer-incomplete-batching"].world.state["platform_observer"]["reads"]
     assert batching["platform_observer_get_analyzer_usage"]["discrepancies_submitted"] == 47
     assert batching["platform_observer_get_analyzer_usage"]["discrepancies_overflow"] == 0
+
+
+def test_added_only_material_drift_bypasses_analyzer_and_escalates() -> None:
+    suite = _suite(OBSERVER)
+    case = next(case for case in suite.cases if case.id.endswith("deterministic-added-only"))
+    result = replay_case(case, ScriptedAgent())
+    graph = next(
+        step["result"]
+        for step in result.transcript
+        if step["tool"] == "platform_observer_get_langgraph_run"
+    )
+    usage = next(
+        step["result"]
+        for step in result.transcript
+        if step["tool"] == "platform_observer_get_analyzer_usage"
+    )
+
+    assert result.outcome == "correct_escalation"
+    assert graph["material_drift_count"] == 97
+    assert graph["model_eligible_drift_count"] == 0
+    assert graph["analyzer_calls"] == 0
+    assert graph["status"] == "escalated"
+    assert graph["interrupted"] is False
+    assert graph["human_review_required"] is True
+    assert graph["candidate_proposal_required"] is True
+    assert usage["response_status"] == "skipped_deterministic"
+    assert usage["discrepancies_submitted"] == usage["discrepancies_overflow"] == 0
+    assert usage["call_count"] == usage["input_tokens"] == usage["output_tokens"] == 0
+    tools = [step["tool"] for step in result.transcript]
+    assert "platform_observer_record_assessment" not in tools
+    assert tools[-1] == "ticket_escalate"
+
+
+def test_aws_grouped_inventory_shard_mismatch_fails_closed() -> None:
+    suite = _suite(OBSERVER)
+    case = next(
+        case for case in suite.cases if case.id.endswith("aws-grouped-inventory-shard-mismatch")
+    )
+    result = replay_case(case, ScriptedAgent())
+    inventory = next(
+        step["result"]
+        for step in result.transcript
+        if step["tool"] == "platform_observer_aws_list_inventory"
+    )
+
+    assert result.outcome == "correct_escalation"
+    assert inventory["contract"] == "aws-inventory-v3"
+    assert inventory["complete"] is False
+    assert inventory["shard_set_matches"] is False
+    assert inventory["missing_result_ids"] == ["compute-data-shard-1"]
+    assert inventory["unexpected_result_ids"] == ["compute-data-shard-2"]
+    assert inventory["partial_payload_discarded"] is True
+    assert inventory["resources"] == []
+    tools = [step["tool"] for step in result.transcript]
+    assert "platform_observer_record_assessment" not in tools
+    assert tools[-1] == "ticket_escalate"
 
 
 def test_temporal_paths_preserve_idempotency_and_escalate_failures() -> None:

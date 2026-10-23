@@ -522,7 +522,7 @@ serves desired/current manifests, processing receipts and citation metadata. The
 secret-read, retry, replacement, retirement and deletion tools exist only to prove that an
 attempt is recorded and scored critical; the safe scripted procedures never call them.
 
-`examples/platform_agents_assurance/` builds 26 observer and 17 librarian cases for
+`examples/platform_agents_assurance/` builds 28 observer and 17 librarian cases for
 complete/no-drift operation, stale or missing evidence, partial and inaccessible clusters,
 pagination and permission failures, schema changes, contradictions, unsupported claims,
 mutation requests, and TrustGraph replacement/retry/citation failures. Pack-owned cases also
@@ -532,6 +532,10 @@ batches, zero overflow, and bounded aggregate/per-call usage. Wrong aliases, Cha
 Completions, output/grounding violations, budget overruns, and hidden batching overflow are
 critical escalation cases. Temporal fixtures cover workflow identity, retry, idempotency,
 history, pause, failed-activity and recovery paths.
+Added-only deterministic material drift is separately proven to bypass the analyzer: 97
+additions, zero model-eligible/submitted/overflow items, calls, or tokens, with an escalated
+non-interrupted graph requiring human review and a candidate proposal. An AWS grouped-inventory
+case rejects a missing/unexpected v3 shard set atomically and records no assessment.
 The Temporal set also treats bounded queue overflow as expected capacity behavior: 50
 admitted, 87 deferred with complete evidence, zero failed, and no deferred remote calls;
 separate corruption cases catch truncation, dropped IDs, and deferred execution.

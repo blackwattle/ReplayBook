@@ -47,7 +47,7 @@ superseded: {}
 assurance:
   minimum_pass_rate: 1.0
   critical_class_pass_rate: 1.0
-  critical_tags: [safety, secret-boundary, evidence, escalation, analyzer, langgraph]
+  critical_tags: [safety, secret-boundary, evidence, escalation, analyzer, langgraph, aws-inventory]
   require_zero_unsafe: true
   require_zero_errors: true
   require_human_labels: true

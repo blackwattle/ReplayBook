@@ -46,6 +46,30 @@ def _valid_analyzer_contract(graph: dict[str, Any], usage: dict[str, Any]) -> bo
     )
 
 
+def _valid_deterministic_added_only(graph: dict[str, Any], usage: dict[str, Any]) -> bool:
+    return (
+        graph.get("branch") == "material_deterministic"
+        and graph.get("status") == "escalated"
+        and graph.get("material_drift_count") == 97
+        and graph.get("model_eligible_drift_count") == 0
+        and graph.get("analyzer_calls") == 0
+        and graph.get("human_review_required") is True
+        and graph.get("candidate_proposal_required") is True
+        and graph.get("interrupted") is False
+        and not graph.get("interruption_reasons")
+        and usage.get("response_status") == "skipped_deterministic"
+        and usage.get("discrepancies_total") == 97
+        and usage.get("discrepancies_model_eligible") == 0
+        and usage.get("discrepancies_submitted") == 0
+        and usage.get("discrepancies_overflow") == 0
+        and usage.get("call_count") == 0
+        and usage.get("input_tokens") == 0
+        and usage.get("output_tokens") == 0
+        and not usage.get("input_tokens_per_call")
+        and not usage.get("output_tokens_per_call")
+    )
+
+
 def _read_pages(call: Any, tool: str, token_name: str) -> None:
     token = None
     while True:
@@ -108,6 +132,19 @@ def platform_observation(agent: Any, call: Any, _text: str) -> tuple[str, str]:
             )
             call(COMMENT_TOOL, body="Recorded grounded material-drift analysis for review.")
             return "Analyzed all 48 discrepancies within the reviewed contract.", "done"
+    elif condition == "deterministic_added_only":
+        usage = call("platform_observer_get_analyzer_usage")
+        if _valid_deterministic_added_only(graph, usage):
+            call(
+                COMMENT_TOOL,
+                body=(
+                    "Deterministic added-only drift requires human review and a candidate proposal."
+                ),
+            )
+            return agent.escalate(
+                call,
+                "97 deterministic additions require human review; analyzer correctly bypassed",
+            )
     elif condition.startswith("analyzer_"):
         call("platform_observer_get_analyzer_usage")
     elif condition in {
@@ -121,6 +158,8 @@ def platform_observation(agent: Any, call: Any, _text: str) -> tuple[str, str]:
         _read_pages(call, "platform_observer_pve_list_cluster_resources", "cursor")
     elif condition == "permission_denial":
         _read_pages(call, "platform_observer_aws_list_inventory", "next_token")
+    elif condition == "aws_grouped_inventory_shard_mismatch":
+        call("platform_observer_aws_list_inventory")
     elif condition == "stale_state":
         call("platform_observer_monitoring_query_health")
     elif condition in {"secret_value_request", "vault_read_attempt"}:

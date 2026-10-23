@@ -16,7 +16,7 @@ On Windows PowerShell, separate the two pack directories with `;` instead of
 `:`. The assurance packs are opt-in so adding them cannot change the demo's
 pinned test-set worlds or built-in request-type list.
 
-The generated test sets contain 26 observer cases and 17 librarian cases. They
+The generated test sets contain 28 observer cases and 17 librarian cases. They
 cover no drift; stale, missing, partial, inaccessible, paginated,
 permission-denied, changed-schema, and contradictory evidence; secret-value and
 mutation requests; required escalation; and TrustGraph replacement, retry, and
@@ -30,7 +30,11 @@ zero overflow, three calls, 19,296 input tokens and 10,299 output tokens within
 the 90,000/12,000 aggregate and 5,000-per-call output limits. Critical cases
 cover wrong aliases, Chat Completions fallback, malformed/ungrounded output,
 usage overruns, incomplete batching/hidden overflow, branch mismatch,
-analyzer-limit exhaustion, and explicit escalation. Librarian fixtures cover
+analyzer-limit exhaustion, and explicit escalation. A deterministic material
+case proves 97 additions remain model-ineligible, use zero analyzer calls/tokens,
+and escalate without interruption for human review and a candidate proposal. An
+AWS v3 grouped-inventory case proves a missing/unexpected shard set discards all
+partial resources, records no assessment, and escalates. Librarian fixtures cover
 Temporal workflow-ID collision, retry exhaustion, matching and conflicting
 idempotency, incomplete history, operator pause, failed activity, pending
 recovery, successful idempotent recovery, and bounded queue overflow. The valid

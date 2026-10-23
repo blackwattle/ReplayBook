@@ -35,6 +35,17 @@ per call. The representative complete result submits all 48 discrepancies in bat
 escalate a wrong alias, Chat Completions fallback, malformed or ungrounded output, any usage
 overrun, incomplete batching, or hidden overflow.
 
+Only changed drift is model-eligible. Added-only deterministic material drift must bypass the
+analyzer completely. For the representative 97-addition result, require zero model-eligible,
+submitted, overflow, calls, input tokens, and output tokens; graph status must be escalated,
+not interrupted, with human review and a candidate proposal required. Escalate without
+recording an assessment and never call an analyzer.
+
+AWS grouped inventory is atomic. Require the exact six `aws-inventory-v3` result IDs: shards
+0 and 1 for core, compute-data, and security-operations, with a matching matrix and complete
+identity-consistent coverage. Missing, unexpected, reordered, partial, or mismatched shards
+discard every partial payload, record no assessment, and escalate for operator review.
+
 Call `ticket_escalate` and stop on stale or incomplete state, missing resources, partial
 clusters, inaccessible nodes, pagination errors, permission denial, schema changes,
 contradictions, unsupported claims, or any request to read secret values or mutate PVE,
