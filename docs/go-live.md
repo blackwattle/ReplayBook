@@ -13,8 +13,8 @@ Before a person approves a skill's writes on a live ticket, the runtime asks Rep
 what the approver should see:
 
 ```bash
-uv run replaybook approval-request --skill kafka_topic --ticket OPS-4211 --plan plan.json --out approvals/OPS-4211
-uv run replaybook approval-request --skill kafka_topic --plan plan.json --out approvals/x --runs runs --evidence evidence --live-dir live
+replaybook approval-request --skill kafka_topic --ticket OPS-4211 --plan plan.json --out approvals/OPS-4211
+replaybook approval-request --skill kafka_topic --plan plan.json --out approvals/x --runs runs --evidence evidence --live-dir live
 ```
 
 `--plan` is the writes the skill wants to make, as JSON (inline, a file, or `-` for stdin):
@@ -52,8 +52,8 @@ back with the run (`replaybook live record`). `replaybook mcp` can render reques
 The runtime reports each run as JSON:
 
 ```bash
-uv run replaybook live record --run run.json                 # or --run - to read stdin
-uv run replaybook live record --run run.json --live-dir live --discovery discovery/discovery.json
+replaybook live record --run run.json                 # or --run - to read stdin
+replaybook live record --run run.json --live-dir live --discovery discovery/discovery.json
 ```
 
 ```json
@@ -62,7 +62,7 @@ uv run replaybook live record --run run.json --live-dir live --discovery discove
   "skill_version": "5e0d2f4569c1",
   "ticket": "OPS-4211",
   "at": "2026-10-20T09:14:00Z",
-  "approval": {"decision": "approved", "by": "ben", "reason": null, "at": "2026-10-20T09:12:30Z"},
+  "approval": {"decision": "approved", "by": "reviewer", "reason": null, "at": "2026-10-20T09:12:30Z"},
   "writes": [
     {"tool": "kafka_create_topic", "args": {"cluster": "kafka-prod", "topic": "payments.events.v1", "partitions": 6}, "verification": "verified"},
     {"tool": "kafka_add_acl", "args": {"cluster": "kafka-prod", "topic": "payments.events.v1", "principal": "svc-payments-prod", "operations": ["WRITE", "DESCRIBE"]}, "verification": "verified"}
@@ -109,9 +109,9 @@ guessed.
 ## Rolling rates and the degraded flag
 
 ```bash
-uv run replaybook live report                   # every skill
-uv run replaybook live report --skill kafka_topic --window 50
-uv run replaybook live check                    # exit 1 when a skill is degraded
+replaybook live report                   # every skill
+replaybook live report --skill kafka_topic --window 50
+replaybook live check                    # exit 1 when a skill is degraded
 ```
 
 Per skill, over its last `--window` runs (`REPLAYBOOK_LIVE_WINDOW`, default 30):

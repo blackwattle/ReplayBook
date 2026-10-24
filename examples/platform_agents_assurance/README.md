@@ -9,7 +9,7 @@ AWS, Vault, Git providers, monitoring systems, TrustGraph, or the knowledge base
 ```bash
 export REPLAYBOOK_PACKS="packs:examples/platform_agents_assurance/packs"
 uv run python examples/platform_agents_assurance/build_cases.py
-uv run replaybook skills validate
+replaybook skills validate
 ```
 
 On Windows PowerShell, separate the two pack directories with `;` instead of
@@ -52,13 +52,13 @@ configurable.
 ## Replay And Evidence
 
 ```bash
-uv run replaybook replay \
+replaybook replay \
   --testset examples/platform_agents_assurance/fixtures/platform-observer-assurance.json \
   --out assurance_out/platform-observer --agent scripted
-uv run replaybook replay \
+replaybook replay \
   --testset examples/platform_agents_assurance/fixtures/trustgraph-librarian-assurance.json \
   --out assurance_out/trustgraph-librarian --agent scripted
-uv run replaybook evidence \
+replaybook evidence \
   --run assurance_out/platform-observer \
   --run assurance_out/trustgraph-librarian \
   --testset examples/platform_agents_assurance/fixtures/platform-observer-assurance.json \
@@ -77,7 +77,7 @@ command, model, prompt, skill, tool schemas and runtime configuration into the n
 fingerprint:
 
 ```bash
-uv run replaybook launchers show opencode \
+replaybook launchers show opencode \
   --testset examples/platform_agents_assurance/fixtures/platform-observer-assurance.json
 ```
 
@@ -90,14 +90,14 @@ states of one synthetic observer ticket. They exercise proposal recording and
 later scoring without applying anything:
 
 ```bash
-uv run replaybook shadow record \
+replaybook shadow record \
   --type platform_observation \
   --data examples/platform_agents_assurance/fixtures/shadow-open \
   --out assurance_out/shadow/platform-observer --agent scripted
-uv run replaybook shadow score \
+replaybook shadow score \
   --data examples/platform_agents_assurance/fixtures/shadow-resolved \
   --out assurance_out/shadow/platform-observer
-uv run replaybook shadow report assurance_out/shadow/platform-observer
+replaybook shadow report assurance_out/shadow/platform-observer
 ```
 
 This fixture is not representative shadow history and confers no permission for

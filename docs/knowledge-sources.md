@@ -49,10 +49,10 @@ also means tickets from the horizon's own day are dropped.
 
 ```bash
 # Over streamable HTTP; secrets as ${VARIABLES} from .env, never values:
-uv run replaybook knowledge import --name ticket_rag --url '${TICKET_RAG_URL}' \
+replaybook knowledge import --name ticket_rag --url '${TICKET_RAG_URL}' \
     --header 'Authorization=Bearer ${TICKET_RAG_TOKEN}' --out packs
 # Or a server you start over stdio:
-uv run replaybook knowledge import --name ticket_rag --command "python rag_server.py" --out packs
+replaybook knowledge import --name ticket_rag --command "python rag_server.py" --out packs
 ```
 
 The import lists the server's tools (the only call it makes) and writes
@@ -64,7 +64,7 @@ the ticket id or the dates, so those say `CHANGE_ME`. Run a check with a query t
 real result's fields:
 
 ```bash
-uv run replaybook knowledge check ticket_rag --query "certificate expired on the load balancer"
+replaybook knowledge check ticket_rag --query "certificate expired on the load balancer"
 ```
 
 It prints what the server returned, what the guard removed and why, the fields of the first
@@ -175,7 +175,7 @@ today. Name it in `as_of_arg`; Replaybook sets it and hides it from the agent.
 ## Scoring the search: `knowledge eval`
 
 ```bash
-uv run replaybook knowledge eval --data data/warehouse --source builtin --source ticket_rag --n 200 --k 10 --out retrieval/
+replaybook knowledge eval --data data/warehouse --source builtin --source ticket_rag --n 200 --k 10 --out retrieval/
 ```
 
 - **Cases**: the newest `--n` tickets (optionally `--since`/`--until`) that are linked to,
@@ -202,7 +202,7 @@ opens tickets and decides what to trust. `--agent` adds an agent under test as o
 source, on the same cases:
 
 ```bash
-uv run replaybook knowledge eval --data data/warehouse --source builtin --source ticket_rag \
+replaybook knowledge eval --data data/warehouse --source builtin --source ticket_rag \
     --agent skill --type ticket_rag_research --out retrieval
 ```
 
@@ -254,12 +254,12 @@ about replay: it returns every match whenever it was created, with resolutions, 
 age. `examples/ticket_rag/packs/ticket_rag/` is the knowledge pack for it.
 
 ```bash
-uv run replaybook generate --out data/generated
+replaybook generate --out data/generated
 export TICKET_RAG_DATA=data/generated
 export REPLAYBOOK_PACKS=packs:examples/ticket_rag/packs
-uv run replaybook packs
-uv run replaybook knowledge check ticket_rag --query "kafka topic for payments" --at 2024-06-01T00:00:00Z
-uv run replaybook knowledge eval --data data/generated --source builtin --source ticket_rag --out retrieval
+replaybook packs
+replaybook knowledge check ticket_rag --query "kafka topic for payments" --at 2024-06-01T00:00:00Z
+replaybook knowledge eval --data data/generated --source builtin --source ticket_rag --out retrieval
 ```
 
 `tests/test_knowledge_packs.py` seeds the leaks of `tests/test_time_travel.py` (a later

@@ -44,7 +44,7 @@ def _report(
             "skill_version": version,
             "ticket": f"OPS-{i}",
             "at": (START + timedelta(hours=i)).isoformat(),
-            "approval": {"decision": decision, "by": "ben"},
+            "approval": {"decision": decision, "by": "reviewer"},
             "writes": writes if decision == "approved" else [],
             "escalation": escalation,
         }
@@ -89,7 +89,7 @@ def test_records_that_break_the_contract_are_refused(tmp_path: Path) -> None:
     bad: list[dict[str, Any]] = [
         # a rejected run that made writes
         {
-            "approval": {"decision": "rejected", "by": "ben"},
+            "approval": {"decision": "rejected", "by": "reviewer"},
             "writes": [{**WRITE, "verification": "verified"}],
         },
         # a failed check with no hand-back
@@ -183,7 +183,10 @@ def test_cli_live_record_report_check_and_status(tmp_path: Path, discovery: Path
         ],
     )
     assert recorded.exit_code == 0, recorded.output
-    assert "LIVE-1: kafka_topic on OPS-1, approved by ben, verification verified" in recorded.output
+    assert (
+        "LIVE-1: kafka_topic on OPS-1, approved by reviewer, verification verified"
+        in recorded.output
+    )
     refused = runner.invoke(
         app,
         ["live", "record", "--run", '{"skill": "kafka_topic"}', "--live-dir", str(directory)],

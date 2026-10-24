@@ -136,8 +136,8 @@ What the fields mean:
 them: `tickets.csv`, `comments.csv`, `history.csv`, `actions.jsonl` and `mapping.yaml`.
 
 ```bash
-uv run replaybook tickets import --mapping examples/payroll/csv/mapping.yaml --out data/payroll
-uv run replaybook discover --data data/payroll --out discovery/payroll
+replaybook tickets import --mapping examples/payroll/csv/mapping.yaml --out data/payroll
+replaybook discover --data data/payroll --out discovery/payroll
 ```
 
 The test suite checks that the import produces the same canonical tickets as
@@ -147,8 +147,8 @@ The test suite checks that the import produces the same canonical tickets as
 
 ```bash
 # SERVICENOW_INSTANCE, SERVICENOW_USER, SERVICENOW_PASSWORD in .env
-uv run replaybook servicenow export --table incident --out data/servicenow/incident
-uv run replaybook servicenow export --table sc_req_item --query "assignment_group.name=Platform" --out data/servicenow/platform-requests --effort logged
+replaybook servicenow export --table incident --out data/servicenow/incident
+replaybook servicenow export --table sc_req_item --query "assignment_group.name=Platform" --out data/servicenow/platform-requests --effort logged
 ```
 
 The adapter reads the Table API: the records (`incident` or `sc_req_item`), their
@@ -216,7 +216,7 @@ effort: {source: status_time, working_statuses: [In Progress, Reopened]}
 ```
 
 ```bash
-uv run replaybook postgres import --mapping warehouse.yaml --out data/warehouse
+replaybook postgres import --mapping warehouse.yaml --out data/warehouse
 ```
 
 **A query instead of a table.** Any section can name a `query` instead of a `table`: one

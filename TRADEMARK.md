@@ -1,6 +1,6 @@
 # Trademark
 
-"Replaybook" is a trademark of Ben Prior. The Apache License, Version 2.0 that covers the
+"Replaybook" is a trademark of the Replaybook project maintainer. The Apache License, Version 2.0 that covers the
 code (section 6) does not grant trademark rights, and this file says what is fine without
 asking.
 

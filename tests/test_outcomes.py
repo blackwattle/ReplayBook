@@ -165,7 +165,7 @@ def test_accepted_differences_never_cover_unsafe_errors_or_escalations() -> None
     ]
     store = AcceptedDifferences()
     for r in results:
-        store.add("case", r.case_id, "history is outdated", "ben")
+        store.add("case", r.case_id, "history is outdated", "reviewer")
     applied = {r.case_id: r for r in apply_accepted(results, store)}
     assert applied["A"].outcome == "accepted" and applied["A"].accepted_from == "partial"
     assert applied["B"].outcome == "accepted" and applied["B"].accepted_from == "mismatch"
@@ -220,7 +220,7 @@ def test_result_line_and_usefulness() -> None:
         AcceptedDifferences(
             accepted=[
                 AcceptedDifferences()
-                .add("case", "X", "outdated", "ben", today=NOW.date())
+                .add("case", "X", "outdated", "reviewer", today=NOW.date())
                 .model_copy()
             ]
         ),
@@ -238,7 +238,7 @@ def _checked(n: int, labels: dict[str, str] | None = None) -> lab.LabelStatus:
         lab.LabelCheck(
             id="LBL-1",
             test_set="ts",
-            reviewer="ben",
+            reviewer="reviewer",
             checked_at=NOW,
             cases_in_set=n,
             required=lab.required_sample(n),
@@ -302,23 +302,23 @@ def test_spot_check_sample_size_and_block() -> None:
 
     store = lab.LabelChecks()
     with pytest.raises(ValueError, match="at least 10"):
-        lab.record_check(suite, store, "ben", case_ids=sample[:9])
+        lab.record_check(suite, store, "reviewer", case_ids=sample[:9])
     with pytest.raises(ValueError, match="reviewer"):
         lab.record_check(suite, store, " ", case_ids=sample)
     with pytest.raises(ValueError, match="not in test set"):
-        lab.record_check(suite, store, "ben", case_ids=[*sample, "NOPE"])
+        lab.record_check(suite, store, "reviewer", case_ids=[*sample, "NOPE"])
     assert not lab.label_status("ts", lab.test_set_labels(suite), store).checked
 
     updated, entry = lab.record_check(
-        suite, store, "ben", case_ids=sample, changes={sample[-1]: "escalate"}, note="CAB"
+        suite, store, "reviewer", case_ids=sample, changes={sample[-1]: "escalate"}, note="CAB"
     )
-    assert entry.id == "LBL-1" and entry.reviewer == "ben" and len(entry.labels) == 10
+    assert entry.id == "LBL-1" and entry.reviewer == "reviewer" and len(entry.labels) == 10
     assert [(c.case_id, c.was, c.now) for c in entry.changed] == [(sample[-1], "act", "escalate")]
     changed = updated.case(sample[-1]).expectation
     assert changed.outcome == "escalate" and changed.outcome_source == "manual"
     assert entry.test_set_sha256 == updated.sha256() != suite.sha256()
     status = lab.label_status("ts", lab.test_set_labels(updated), store)
-    assert status.checked and status.covered == 10 and status.reviewers == ["ben"]
+    assert status.checked and status.covered == 10 and status.reviewers == ["reviewer"]
     # The old labels no longer match what was checked for the changed case.
     assert lab.label_status("ts", lab.test_set_labels(suite), store).covered == 9
 
@@ -378,7 +378,7 @@ def test_spot_check_that_changed_too_many_labels_does_not_count() -> None:
 
 def test_label_checks_round_trip(tmp_path: Path) -> None:
     store = lab.LabelChecks()
-    lab.record_check(_suite(12), store, "ben")
+    lab.record_check(_suite(12), store, "reviewer")
     path = tmp_path / "assurance" / "labels.yaml"
     store.save(path)
     assert lab.LabelChecks.load(path) == store
@@ -571,7 +571,7 @@ def test_runs_record_the_skill_version_and_old_runs_still_load(
     identity = skill_identity("kafka_topic")
     assert run.skill == "kafka-topic-acls" and run.skill_version == identity["skill_version"]
     assert len(run.skill_version or "") == 64
-    baseline = approve(run, "ben", tmp_path / "baselines")
+    baseline = approve(run, "reviewer", tmp_path / "baselines")
     assert baseline.skill_version == run.skill_version
 
     # A results.json written before spec v5: pass/fail outcomes, no skill, no outcome counts.
@@ -622,14 +622,14 @@ def test_check_go_live_keeps_exit_codes_unless_asked(small_dataset: Path, tmp_pa
         load_tickets(small_dataset), load_platform(small_dataset), "artifactory_repo", n=12
     )
     baselines = tmp_path / "baselines"
-    approve(run_replay(ts, ScriptedAgent(), tmp_path / "base", workers=2), "ben", baselines)
+    approve(run_replay(ts, ScriptedAgent(), tmp_path / "base", workers=2), "reviewer", baselines)
     plain, _ = check(ts, ScriptedAgent(), tmp_path / "c1", baseline_dir=baselines)
     assert plain.exit_code == 0 and plain.go_live is None
     gated, _ = check(ts, ScriptedAgent(), tmp_path / "c2", baseline_dir=baselines, go_live=True)
     assert gated.exit_code == 1 and gated.go_live is not None
     assert "labels not spot-checked" in gated.go_live.line()
     store = lab.LabelChecks()
-    lab.record_check(ts, store, "ben")
+    lab.record_check(ts, store, "reviewer")
     passing, _ = check(
         ts,
         ScriptedAgent(),
@@ -672,7 +672,7 @@ def test_cli_labels_sample_check_and_report(small_dataset: Path, tmp_path: Path)
             "--testset",
             str(ts_path),
             "--reviewer",
-            "ben",
+            "reviewer",
             "--cases",
             "OPS-1,OPS-2",
             "--labels-file",
@@ -689,7 +689,7 @@ def test_cli_labels_sample_check_and_report(small_dataset: Path, tmp_path: Path)
             "--testset",
             str(ts_path),
             "--reviewer",
-            "ben",
+            "reviewer",
             "--set",
             f"{first}=escalate",
             "--labels-file",
@@ -697,7 +697,7 @@ def test_cli_labels_sample_check_and_report(small_dataset: Path, tmp_path: Path)
         ],
     )
     assert checked.exit_code == 0, checked.output
-    assert "LBL-1: ben checked" in checked.output and f"CHANGED {first}" in checked.output
+    assert "LBL-1: reviewer checked" in checked.output and f"CHANGED {first}" in checked.output
     assert (
         Suite.model_validate_json(ts_path.read_text(encoding="utf-8"))
         .case(first)

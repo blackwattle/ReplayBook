@@ -147,7 +147,7 @@ def test_accept_by_case_and_signature_with_expiry(fixed_quota: RunResult, tmp_pa
         "case",
         failing[0].case_id,
         "History predates the unified quota tool.",
-        "ben",
+        "reviewer",
         days=30,
         kind="outdated_history",
         today=TODAY,
@@ -155,7 +155,7 @@ def test_accept_by_case_and_signature_with_expiry(fixed_quota: RunResult, tmp_pa
     assert entry.id == "ACC-1" and entry.expires == date(2026, 11, 17)
     applied = apply_accepted(fixed_quota.results, store, today=TODAY)
     first = next(r for r in applied if r.case_id == failing[0].case_id)
-    assert first.outcome == "accepted" and "ben" in (first.accepted_by or "")
+    assert first.outcome == "accepted" and "reviewer" in (first.accepted_by or "")
     assert sum(r.outcome == "accepted" for r in applied) == 1
 
     later = apply_accepted(fixed_quota.results, store, today=date(2026, 12, 1))
@@ -164,7 +164,11 @@ def test_accept_by_case_and_signature_with_expiry(fixed_quota: RunResult, tmp_pa
 
     groups = group_failures(fixed_quota.results)
     store.add(
-        "signature", groups[0].signature, "Whole group: pre-change history.", "ben", today=TODAY
+        "signature",
+        groups[0].signature,
+        "Whole group: pre-change history.",
+        "reviewer",
+        today=TODAY,
     )
     by_group = apply_accepted(fixed_quota.results, store, today=TODAY)
     accepted_ids = {r.case_id for r in by_group if r.outcome == "accepted"}
@@ -175,7 +179,7 @@ def test_accept_by_case_and_signature_with_expiry(fixed_quota: RunResult, tmp_pa
     loaded = AcceptedDifferences.load(path)
     assert loaded == store
     with pytest.raises(ValueError):
-        store.add("case", "X", "", "ben", today=TODAY)
+        store.add("case", "X", "", "reviewer", today=TODAY)
     with pytest.raises(ValueError):
         store.add("case", "X", "why", "", today=TODAY)
 
@@ -230,7 +234,7 @@ def test_cli_groups_and_accept(small_dataset: Path, tmp_path: Path) -> None:
             "--reason",
             "pre-change history",
             "--approver",
-            "ben",
+            "reviewer",
             "--kind",
             "outdated_history",
             "--expires",
@@ -246,6 +250,14 @@ def test_cli_groups_and_accept(small_dataset: Path, tmp_path: Path) -> None:
     assert "accepted" in report.output
     bad = runner.invoke(
         app,
-        ["accept", "--case", "OPS-1", "--approver", "ben", "--accepted-file", str(accepted_file)],
+        [
+            "accept",
+            "--case",
+            "OPS-1",
+            "--approver",
+            "reviewer",
+            "--accepted-file",
+            str(accepted_file),
+        ],
     )
     assert bad.exit_code != 0

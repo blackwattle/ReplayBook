@@ -150,7 +150,7 @@ def test_whole_workflow_through_the_mcp_tools(tmp_path: Path) -> None:
             "--run",
             str(tmp_path / "v1"),
             "--approver",
-            "ben",
+            "reviewer",
             "--baseline-dir",
             str(baselines),
         ],

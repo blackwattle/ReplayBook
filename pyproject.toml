@@ -5,7 +5,7 @@ description = "Tests ops agents against a team's own past tickets in a mock envi
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-authors = [{ name = "Ben Prior" }]
+authors = [{ name = "Replaybook contributors" }]
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",

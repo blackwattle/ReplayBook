@@ -78,7 +78,9 @@ def test_check_reports_synced_cases_as_new(small_dataset: Path, tmp_path: Path) 
     original = build_test_set(early, platform, "openstack_quota", n=12, data_dir=str(early_dir))
     baseline_dir = tmp_path / "baselines"
     approve(
-        run_replay(original, ScriptedAgent(), tmp_path / "base", workers=2), "ben", baseline_dir
+        run_replay(original, ScriptedAgent(), tmp_path / "base", workers=2),
+        "reviewer",
+        baseline_dir,
     )
     updated, entry = sync_test_set(original, full, platform, data_dir=str(small_dataset))
     assert entry["added"]

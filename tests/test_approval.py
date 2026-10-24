@@ -68,7 +68,7 @@ def replayed(small_dataset: Path, tmp_path: Path) -> Setup:
     runs = tmp_path / "runs"
     run = run_replay(ts, ScriptedAgent(), runs / "v2-kafka", workers=2)
     checks = LabelChecks()
-    record_check(ts, checks, "ben")
+    record_check(ts, checks, "reviewer")
     labels = tmp_path / "labels.yaml"
     checks.save(labels)
     build_evidence(
@@ -208,7 +208,7 @@ def test_live_verification_rate_and_degraded_warning(replayed: Setup) -> None:
                 "skill_version": version,
                 "ticket": f"OPS-{i}",
                 "at": datetime(2026, 10, 1, 9, i, tzinfo=UTC).isoformat(),
-                "approval": {"decision": "approved", "by": "ben"},
+                "approval": {"decision": "approved", "by": "reviewer"},
                 "writes": [{"tool": "kafka_create_topic", "args": {}, "verification": status}],
                 "escalation": None
                 if status == "verified"

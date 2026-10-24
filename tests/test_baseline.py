@@ -35,7 +35,7 @@ def test_approve_then_check_only_reports_differences(suite: Suite, tmp_path: Pat
     baseline_dir = tmp_path / "baselines"
     fixed = ScriptedAgent()
     baseline_run = run_replay(suite, fixed, tmp_path / "base", workers=3)
-    baseline = approve(baseline_run, "ben", baseline_dir)
+    baseline = approve(baseline_run, "reviewer", baseline_dir)
     assert load_baseline(suite.name, baseline_dir) == baseline
     assert baseline.fingerprint == baseline_run.fingerprint
 
@@ -75,7 +75,9 @@ def test_check_without_baseline_is_an_error(suite: Suite, tmp_path: Path) -> Non
 
 def test_check_with_crashing_agent_exits_2(suite: Suite, tmp_path: Path) -> None:
     baseline_dir = tmp_path / "baselines"
-    approve(run_replay(suite, ScriptedAgent(), tmp_path / "base", workers=3), "ben", baseline_dir)
+    approve(
+        run_replay(suite, ScriptedAgent(), tmp_path / "base", workers=3), "reviewer", baseline_dir
+    )
     report, run = check(suite, _Crashing(), tmp_path / "check", baseline_dir=baseline_dir)
     assert report.reran and report.exit_code == 2 and report.errors == run.summary.total
 
@@ -85,7 +87,7 @@ def test_improvements_and_accepted_count_as_good(suite: Suite, tmp_path: Path) -
     flawed_run = run_replay(
         suite, ScriptedAgent(flaws=["superseded_procedure"]), tmp_path / "base", workers=3
     )
-    approve(flawed_run, "ben", baseline_dir)
+    approve(flawed_run, "reviewer", baseline_dir)
     report, run = check(suite, ScriptedAgent(), tmp_path / "check", baseline_dir=baseline_dir)
     # Post-change tickets improve. Pre-change tickets regress: the flawed agent matched their
     # outdated history by accident, the fixed agent does not. Those carry the visible tag.
@@ -98,7 +100,11 @@ def test_improvements_and_accepted_count_as_good(suite: Suite, tmp_path: Path) -
     for r in run.results:
         if r.outcome in ACCEPTABLE:
             store.add(
-                "case", r.case_id, "history predates the KRaft move", "ben", kind="outdated_history"
+                "case",
+                r.case_id,
+                "history predates the KRaft move",
+                "reviewer",
+                kind="outdated_history",
             )
     report2, run2 = check(
         suite,
@@ -184,7 +190,7 @@ def test_cli_approve_and_check_exit_codes(small_dataset: Path, tmp_path: Path) -
             "--run",
             str(tmp_path / "base"),
             "--approver",
-            "ben",
+            "reviewer",
             "--baseline-dir",
             str(baselines),
         ],

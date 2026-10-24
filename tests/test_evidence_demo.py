@@ -34,7 +34,7 @@ def test_evidence_pack_is_complete_and_hashed(small_dataset: Path, tmp_path: Pat
     )
     store = AcceptedDifferences()
     failing = [r for r in run.results if r.outcome in ("mismatch", "partial")]
-    store.add("case", failing[0].case_id, "reviewed", "ben")
+    store.add("case", failing[0].case_id, "reviewed", "reviewer")
     acc_path = tmp_path / "accepted.yaml"
     store.save(acc_path)
 

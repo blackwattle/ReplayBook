@@ -19,7 +19,7 @@ from replaybook.cli import app
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "jira"
 SITE = "https://example.atlassian.net"
-CONFIG = JiraCloudConfig(site=SITE, email="ben@example.com", token="secret-token")
+CONFIG = JiraCloudConfig(site=SITE, email="reviewer@example.com", token="secret-token")
 
 
 def _infra_issues() -> list[dict[str, Any]]:
@@ -82,7 +82,7 @@ def test_search_paginates_and_completes_truncated_changelogs() -> None:
         "/rest/api/2/issue/INFRA-1001/changelog",
         "/rest/api/2/search/jql",
     ]
-    expected_auth = "Basic " + base64.b64encode(b"ben@example.com:secret-token").decode()
+    expected_auth = "Basic " + base64.b64encode(b"reviewer@example.com:secret-token").decode()
     assert all(h["Authorization"] == expected_auth for _, h in fake.calls)
     assert all(h["Accept"] == "application/json" for _, h in fake.calls)
 
@@ -140,7 +140,7 @@ def test_config_from_env_reports_missing_values(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(JiraCloudError, match="JIRA_SITE"):
         JiraCloudConfig.from_env()
     monkeypatch.setenv("JIRA_SITE", "https://example.atlassian.net/")
-    monkeypatch.setenv("JIRA_EMAIL", "ben@example.com")
+    monkeypatch.setenv("JIRA_EMAIL", "reviewer@example.com")
     monkeypatch.setenv("JIRA_API_TOKEN", "t")
     assert JiraCloudConfig.from_env().site == "https://example.atlassian.net"
 
